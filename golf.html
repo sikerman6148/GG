@@ -145,6 +145,14 @@ const selFromMode=m=>m==='rank'?{ind:'rank',team:null}:m==='tap'?{ind:'tap',team
 function applySel(){const s=S.sel||{};if(s.team)S.mode=s.team;else if(s.ind)S.mode=s.ind}
 function toggleCat(c){snap();S.cat=S.cat===c?null:c;draw(true)}
 function setSel(c,v){snap();if(!S.sel)S.sel={ind:null,team:null};S.sel[c]=v===''?null:v;applySel();fixN();draw(true)}
+const GDESC={
+rank:['🏆 개인별순위','참가자 각자의 총 타수에서 핸디를 뺀 점수로 순위를 매기는 게임이에요. 1위부터 꼴찌까지 순위별 상·벌(예: 점심 쏘기)을 미리 적어 두고, 결과 화면에서 확인해요. 2~5명이 칠 수 있어요.'],
+tap:['💵 타당내기','타수 1타당 정한 금액을 주고받는 게임이에요. 두 사람씩 타수 차이 × 타당금액을 계산해서 누가 누구에게 얼마를 줄지 알려줘요. 핸디는 시작 전에 미리 돈으로 정산한 것으로 보고 계산에서 빼요. 홀마다 단판~4배판을 고를 수 있어요.'],
+fine:['🔄 팀로테이션 · 💰 벌금게임','2홀씩 한 라운드로 팀이 바뀌며 겨루는 게임이에요. 라운드에서 합산 타수가 많은 팀이 각자 정한 벌금을 내고, 비기면 모두 비겼을 때 벌금을 내요. 라운드마다 단판~4배판을 고를 수 있어요.'],
+pt:['🔄 팀로테이션 · 🎯 벌점게임','벌금게임처럼 2홀씩 팀이 바뀌며 겨루지만, 진 팀이 벌점을 받는 게임이에요. 진 팀은 +1점, 비기면 모두 +0.5점이고, 벌점이 많은 순서대로 정해 둔 벌금 총액을 나눠 내요.'],
+prize:['🔄 팀로테이션 · 🏆 상금게임','시작 전에 모은 총상금을 홀마다 겨뤄서 가져가는 게임이에요. 홀마다 팀을 나누고(뽑기·좌타우타·전홀순위·전홀팀유지), 합산 타수가 적은 팀이 인당 정한 상금을 받아가요. 비기면 상금이 다음 홀로 이월되고, 상금이 떨어지면 추가할 수 있어요.'],
+team:['🤝 팀별내기','A팀과 B팀으로 나눠 팀 합산 타수로 승부를 가리는 게임이에요. 팀 핸디를 정할 수 있고, 이긴 팀 상·진 팀 벌을 미리 적어 두면 결과 화면에서 안내해요.']};
+const gameDesc=()=>{const sel=S.sel||{},L=[sel.ind,sel.team].filter(Boolean).map(k=>GDESC[k]).filter(Boolean);return L.map(([t,x])=>`<div style="margin-top:12px;padding:10px 12px;border-radius:12px;background:var(--in);border:1px solid var(--bd)"><div style="font-weight:700">📖 ${t}</div><div class="sub" style="margin-top:4px;line-height:1.6">${x}</div></div>`).join('')};
 const PMN={draw:'뽑기',lr:'좌타우타',rank:'전홀순위',keep:'전홀팀유지'};
 function toggleRot(){snap();S.rotOpen=!S.rotOpen;draw(true)}
 const modeBtns=()=>{const sel=S.sel||{ind:null,team:null},st=(on,ind)=>`class="par ${on?'on':''}" style="font-size:14px;margin-top:8px;display:block;width:${ind?'calc(100% - 14px)':'100%'};margin-left:${ind?14:0}px;text-align:left;padding:11px 9px;line-height:1.3;white-space:normal;word-break:keep-all"`,
@@ -157,7 +165,7 @@ const modeBtns=()=>{const sel=S.sel||{ind:null,team:null},st=(on,ind)=>`class="p
  if(sel.team==='prize')h+=`<div class="sub" style="margin-top:8px">🏆 상금게임의 팀 편성 방식(뽑기·좌타우타·전홀순위)은 게임 시작 후 홀마다 고를 수 있어요.</div>`;
  h+=`<div class="sub" style="margin-top:10px">선택: 개인대항 <b>${sel.ind?gname('ind',sel.ind):'선택없음'}</b> · 팀별대항 <b>${sel.team?(rotSel?'팀로테이션 · ':'')+gname('team',sel.team):'선택없음'}</b></div>`;
  if(sel.ind&&sel.team)h+=`<div class="sub" style="margin-top:4px;color:var(--bad)">두 대항을 함께 골랐어요. 지금은 <b>팀별대항</b> 게임을 기준으로 진행하고, 개인대항 판정은 다음 단계에서 추가돼요.</div>`;
- return h};
+ return h+gameDesc()};
 const setupBoth=e=>{const m=S.mode,tm=m==='team',nr=i=>`<div class="pi">${dot(i)}${tm?`<span class="chip ${i<NP()/2?'A':'B'}">${i<NP()/2?'A':'B'}</span>`:''}<input id="n${i}" value="${S.names[i]}" placeholder="선수${i+1}" oninput="hlx()" ${S.v3&&i===3?'readonly':''}></div>`,hin=(id,v)=>`<input id="${id}" type="number" inputmode="decimal" step="0.5" placeholder="핸디" value="${v==null?0:v}" oninput="hmRefresh()" style="flex:none;width:90px;text-align:center">`;
  let h=stats()+`<div class="card"><h2>🎮 게임 선택</h2>${modeBtns()}</div><div class="card"><h2>👥 공통 입력</h2>${nSel()}${nameScanBox()}<h2 style="margin-top:18px">👥 참가자</h2>${PI().map(nr).join('')}${vcBox()}<label>🙋 나는 몇 번 선수?</label><select id="me">${PI().map(i=>`<option value="${i}" ${S.me===i?'selected':''}>선수 ${i+1}</option>`).join('')}</select></div>`;
  h+=`<div class="card"><h2>👤 개인대항 · ${gname('ind',S.sel.ind)} 설정</h2>`+(S.sel.ind==='rank'?`<div class="sub">핸디는 총 타수에서 뺄 타수예요. 기본값은 0이에요.</div>`+PI().map(i=>`<div class="pi">${dot(i)}<span class="n">${S.names[i]||'선수'+(i+1)}</span>${hin('ph'+i,S.ph[i])}</div>`).join('')+`<h2 style="margin-top:18px">🎁 순위별 상벌</h2><div class="sub">1~${NP()}위에게 적용할 상이나 벌칙을 적어 주세요.</div>`+PI().map(i=>`<div class="pi"><span class="n" style="flex:none;width:44px">${i+1}위</span><input id="rw${i}" value="${S.rw[i]}" placeholder="${['예: 점심 쏘기','예: 음료 쏘기','','예: 커피 사기',''][i]||''}"></div>`).join('')+`<div class="sub" style="margin-top:8px;color:var(--bad)">개인대항 판정은 다음 단계에서 추가돼요.</div>`:`<div class="sub">핸디는 총 타수에서 뺄 타수예요. 기본값은 0이에요.</div>`+PI().map(i=>`<div class="pi">${dot(i)}<span class="n">${S.names[i]||'선수'+(i+1)}</span>${hin('ph'+i,S.ph[i])}</div>`).join('')+tapBlock()+`<div class="sub" style="margin-top:8px;color:var(--bad)">개인대항 판정은 다음 단계에서 추가돼요.</div>`)+`</div>`;
