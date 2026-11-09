@@ -66,12 +66,1324 @@ textarea{width:100%;height:170px;font-size:13px;padding:10px;border-radius:12px;
 :root:not([data-theme="light"]) button.g,:root:not([data-theme="light"]) .nvb,:root:not([data-theme="light"]) .cb{background:linear-gradient(#52687a,#3a4c5a);color:#f2f7fa;box-shadow:0 4px 0 #1b2630,0 6px 10px rgba(0,0,0,.45),inset 0 2px 0 rgba(255,255,255,.18)}
 :root:not([data-theme="light"]) .card{box-shadow:0 6px 0 rgba(0,0,0,.35),0 12px 20px rgba(0,0,0,.35),inset 0 2px 0 rgba(255,255,255,.06)}
 }
+
+.tmt{min-width:840px;font-size:13px}.tmt th{font-size:12px;color:var(--sub);white-space:nowrap}.tmt td,.tmt th{padding:7px 5px;text-align:center;white-space:nowrap}.tmt td:last-child{text-align:left;font-weight:400}.tmt td:nth-child(2){text-align:left;font-weight:700}.tmt input{padding:6px 8px;font-size:14px;min-width:230px;box-shadow:none}
 </style></head><body><main id="app"></main>
 <input type="file" id="fc" accept="image/*" capture="environment" hidden>
 <input type="file" id="fg" accept="image/*" hidden>
 <input type="file" id="fnc" accept="image/*" capture="environment" hidden>
 <input type="file" id="fng" accept="image/*" hidden>
+<input type="file" id="ftm" accept="image/*" hidden>
+<input type="file" id="fbk" accept=".txt,.json,text/plain,application/json" hidden>
 <script>
+const QRB=(function(){const M={};const C={};function def(n,f){M[n]=f}function req(p){const n=p.replace('./','');if(C[n])return C[n].exports;const mod={exports:{}};C[n]=mod;M[n](mod,mod.exports,req);return mod.exports}
+def('QRMode',function(module,exports,require){
+module.exports = {
+    MODE_NUMBER :       1 << 0,
+    MODE_ALPHA_NUM :    1 << 1,
+    MODE_8BIT_BYTE :    1 << 2,
+    MODE_KANJI :        1 << 3
+};
+
+});
+def('QRErrorCorrectLevel',function(module,exports,require){
+module.exports = {
+	L : 1,
+	M : 0,
+	Q : 3,
+	H : 2
+};
+
+
+});
+def('QRMaskPattern',function(module,exports,require){
+module.exports = {
+	PATTERN000 : 0,
+	PATTERN001 : 1,
+	PATTERN010 : 2,
+	PATTERN011 : 3,
+	PATTERN100 : 4,
+	PATTERN101 : 5,
+	PATTERN110 : 6,
+	PATTERN111 : 7
+};
+
+});
+def('QR8bitByte',function(module,exports,require){
+var QRMode = require('./QRMode');
+
+function QR8bitByte(data) {
+	this.mode = QRMode.MODE_8BIT_BYTE;
+	this.data = data;
+}
+
+QR8bitByte.prototype = {
+
+	getLength : function() {
+		return this.data.length;
+	},
+	
+	write : function(buffer) {
+		for (var i = 0; i < this.data.length; i++) {
+			// not JIS ...
+			buffer.put(this.data.charCodeAt(i), 8);
+		}
+	}
+};
+
+module.exports = QR8bitByte;
+
+});
+def('QRBitBuffer',function(module,exports,require){
+function QRBitBuffer() {
+	this.buffer = [];
+	this.length = 0;
+}
+
+QRBitBuffer.prototype = {
+
+	get : function(index) {
+		var bufIndex = Math.floor(index / 8);
+		return ( (this.buffer[bufIndex] >>> (7 - index % 8) ) & 1) == 1;
+	},
+	
+	put : function(num, length) {
+		for (var i = 0; i < length; i++) {
+			this.putBit( ( (num >>> (length - i - 1) ) & 1) == 1);
+		}
+	},
+	
+	getLengthInBits : function() {
+		return this.length;
+	},
+	
+	putBit : function(bit) {
+	
+		var bufIndex = Math.floor(this.length / 8);
+		if (this.buffer.length <= bufIndex) {
+			this.buffer.push(0);
+		}
+	
+		if (bit) {
+			this.buffer[bufIndex] |= (0x80 >>> (this.length % 8) );
+		}
+	
+		this.length++;
+	}
+};
+
+module.exports = QRBitBuffer;
+
+});
+def('QRMath',function(module,exports,require){
+var QRMath = {
+
+	glog : function(n) {
+	
+		if (n < 1) {
+			throw new Error("glog(" + n + ")");
+		}
+		
+		return QRMath.LOG_TABLE[n];
+	},
+	
+	gexp : function(n) {
+	
+		while (n < 0) {
+			n += 255;
+		}
+	
+		while (n >= 256) {
+			n -= 255;
+		}
+	
+		return QRMath.EXP_TABLE[n];
+	},
+	
+	EXP_TABLE : new Array(256),
+	
+	LOG_TABLE : new Array(256)
+
+};
+	
+for (var i = 0; i < 8; i++) {
+	QRMath.EXP_TABLE[i] = 1 << i;
+}
+for (var i = 8; i < 256; i++) {
+	QRMath.EXP_TABLE[i] = QRMath.EXP_TABLE[i - 4]
+		^ QRMath.EXP_TABLE[i - 5]
+		^ QRMath.EXP_TABLE[i - 6]
+		^ QRMath.EXP_TABLE[i - 8];
+}
+for (var i = 0; i < 255; i++) {
+	QRMath.LOG_TABLE[QRMath.EXP_TABLE[i] ] = i;
+}
+
+module.exports = QRMath;
+
+});
+def('QRPolynomial',function(module,exports,require){
+var QRMath = require('./QRMath');
+
+function QRPolynomial(num, shift) {
+	if (num.length === undefined) {
+		throw new Error(num.length + "/" + shift);
+	}
+
+	var offset = 0;
+
+	while (offset < num.length && num[offset] === 0) {
+		offset++;
+	}
+
+	this.num = new Array(num.length - offset + shift);
+	for (var i = 0; i < num.length - offset; i++) {
+		this.num[i] = num[i + offset];
+	}
+}
+
+QRPolynomial.prototype = {
+
+	get : function(index) {
+		return this.num[index];
+	},
+	
+	getLength : function() {
+		return this.num.length;
+	},
+	
+	multiply : function(e) {
+	
+		var num = new Array(this.getLength() + e.getLength() - 1);
+	
+		for (var i = 0; i < this.getLength(); i++) {
+			for (var j = 0; j < e.getLength(); j++) {
+				num[i + j] ^= QRMath.gexp(QRMath.glog(this.get(i) ) + QRMath.glog(e.get(j) ) );
+			}
+		}
+	
+		return new QRPolynomial(num, 0);
+	},
+	
+	mod : function(e) {
+	
+		if (this.getLength() - e.getLength() < 0) {
+			return this;
+		}
+	
+		var ratio = QRMath.glog(this.get(0) ) - QRMath.glog(e.get(0) );
+	
+		var num = new Array(this.getLength() );
+		
+		for (var i = 0; i < this.getLength(); i++) {
+			num[i] = this.get(i);
+		}
+		
+		for (var x = 0; x < e.getLength(); x++) {
+			num[x] ^= QRMath.gexp(QRMath.glog(e.get(x) ) + ratio);
+		}
+	
+		// recursive call
+		return new QRPolynomial(num, 0).mod(e);
+	}
+};
+
+module.exports = QRPolynomial;
+
+});
+def('QRUtil',function(module,exports,require){
+var QRMode = require('./QRMode');
+var QRPolynomial = require('./QRPolynomial');
+var QRMath = require('./QRMath');
+var QRMaskPattern = require('./QRMaskPattern');
+
+var QRUtil = {
+
+    PATTERN_POSITION_TABLE : [
+        [],
+        [6, 18],
+        [6, 22],
+        [6, 26],
+        [6, 30],
+        [6, 34],
+        [6, 22, 38],
+        [6, 24, 42],
+        [6, 26, 46],
+        [6, 28, 50],
+        [6, 30, 54],        
+        [6, 32, 58],
+        [6, 34, 62],
+        [6, 26, 46, 66],
+        [6, 26, 48, 70],
+        [6, 26, 50, 74],
+        [6, 30, 54, 78],
+        [6, 30, 56, 82],
+        [6, 30, 58, 86],
+        [6, 34, 62, 90],
+        [6, 28, 50, 72, 94],
+        [6, 26, 50, 74, 98],
+        [6, 30, 54, 78, 102],
+        [6, 28, 54, 80, 106],
+        [6, 32, 58, 84, 110],
+        [6, 30, 58, 86, 114],
+        [6, 34, 62, 90, 118],
+        [6, 26, 50, 74, 98, 122],
+        [6, 30, 54, 78, 102, 126],
+        [6, 26, 52, 78, 104, 130],
+        [6, 30, 56, 82, 108, 134],
+        [6, 34, 60, 86, 112, 138],
+        [6, 30, 58, 86, 114, 142],
+        [6, 34, 62, 90, 118, 146],
+        [6, 30, 54, 78, 102, 126, 150],
+        [6, 24, 50, 76, 102, 128, 154],
+        [6, 28, 54, 80, 106, 132, 158],
+        [6, 32, 58, 84, 110, 136, 162],
+        [6, 26, 54, 82, 110, 138, 166],
+        [6, 30, 58, 86, 114, 142, 170]
+    ],
+
+    G15 : (1 << 10) | (1 << 8) | (1 << 5) | (1 << 4) | (1 << 2) | (1 << 1) | (1 << 0),
+    G18 : (1 << 12) | (1 << 11) | (1 << 10) | (1 << 9) | (1 << 8) | (1 << 5) | (1 << 2) | (1 << 0),
+    G15_MASK : (1 << 14) | (1 << 12) | (1 << 10)    | (1 << 4) | (1 << 1),
+
+    getBCHTypeInfo : function(data) {
+        var d = data << 10;
+        while (QRUtil.getBCHDigit(d) - QRUtil.getBCHDigit(QRUtil.G15) >= 0) {
+            d ^= (QRUtil.G15 << (QRUtil.getBCHDigit(d) - QRUtil.getBCHDigit(QRUtil.G15) ) );    
+        }
+        return ( (data << 10) | d) ^ QRUtil.G15_MASK;
+    },
+
+    getBCHTypeNumber : function(data) {
+        var d = data << 12;
+        while (QRUtil.getBCHDigit(d) - QRUtil.getBCHDigit(QRUtil.G18) >= 0) {
+            d ^= (QRUtil.G18 << (QRUtil.getBCHDigit(d) - QRUtil.getBCHDigit(QRUtil.G18) ) );    
+        }
+        return (data << 12) | d;
+    },
+
+    getBCHDigit : function(data) {
+
+        var digit = 0;
+
+        while (data !== 0) {
+            digit++;
+            data >>>= 1;
+        }
+
+        return digit;
+    },
+
+    getPatternPosition : function(typeNumber) {
+        return QRUtil.PATTERN_POSITION_TABLE[typeNumber - 1];
+    },
+
+    getMask : function(maskPattern, i, j) {
+        
+        switch (maskPattern) {
+            
+        case QRMaskPattern.PATTERN000 : return (i + j) % 2 === 0;
+        case QRMaskPattern.PATTERN001 : return i % 2 === 0;
+        case QRMaskPattern.PATTERN010 : return j % 3 === 0;
+        case QRMaskPattern.PATTERN011 : return (i + j) % 3 === 0;
+        case QRMaskPattern.PATTERN100 : return (Math.floor(i / 2) + Math.floor(j / 3) ) % 2 === 0;
+        case QRMaskPattern.PATTERN101 : return (i * j) % 2 + (i * j) % 3 === 0;
+        case QRMaskPattern.PATTERN110 : return ( (i * j) % 2 + (i * j) % 3) % 2 === 0;
+        case QRMaskPattern.PATTERN111 : return ( (i * j) % 3 + (i + j) % 2) % 2 === 0;
+
+        default :
+            throw new Error("bad maskPattern:" + maskPattern);
+        }
+    },
+
+    getErrorCorrectPolynomial : function(errorCorrectLength) {
+
+        var a = new QRPolynomial([1], 0);
+
+        for (var i = 0; i < errorCorrectLength; i++) {
+            a = a.multiply(new QRPolynomial([1, QRMath.gexp(i)], 0) );
+        }
+
+        return a;
+    },
+
+    getLengthInBits : function(mode, type) {
+
+        if (1 <= type && type < 10) {
+
+            // 1 - 9
+
+            switch(mode) {
+            case QRMode.MODE_NUMBER     : return 10;
+            case QRMode.MODE_ALPHA_NUM  : return 9;
+            case QRMode.MODE_8BIT_BYTE  : return 8;
+            case QRMode.MODE_KANJI      : return 8;
+            default :
+                throw new Error("mode:" + mode);
+            }
+
+        } else if (type < 27) {
+
+            // 10 - 26
+
+            switch(mode) {
+            case QRMode.MODE_NUMBER     : return 12;
+            case QRMode.MODE_ALPHA_NUM  : return 11;
+            case QRMode.MODE_8BIT_BYTE  : return 16;
+            case QRMode.MODE_KANJI      : return 10;
+            default :
+                throw new Error("mode:" + mode);
+            }
+
+        } else if (type < 41) {
+
+            // 27 - 40
+
+            switch(mode) {
+            case QRMode.MODE_NUMBER     : return 14;
+            case QRMode.MODE_ALPHA_NUM  : return 13;
+            case QRMode.MODE_8BIT_BYTE  : return 16;
+            case QRMode.MODE_KANJI      : return 12;
+            default :
+                throw new Error("mode:" + mode);
+            }
+
+        } else {
+            throw new Error("type:" + type);
+        }
+    },
+
+    getLostPoint : function(qrCode) {
+        
+        var moduleCount = qrCode.getModuleCount();
+        var lostPoint = 0;
+        var row = 0; 
+        var col = 0;
+
+        
+        // LEVEL1
+        
+        for (row = 0; row < moduleCount; row++) {
+
+            for (col = 0; col < moduleCount; col++) {
+
+                var sameCount = 0;
+                var dark = qrCode.isDark(row, col);
+
+                for (var r = -1; r <= 1; r++) {
+
+                    if (row + r < 0 || moduleCount <= row + r) {
+                        continue;
+                    }
+
+                    for (var c = -1; c <= 1; c++) {
+
+                        if (col + c < 0 || moduleCount <= col + c) {
+                            continue;
+                        }
+
+                        if (r === 0 && c === 0) {
+                            continue;
+                        }
+
+                        if (dark === qrCode.isDark(row + r, col + c) ) {
+                            sameCount++;
+                        }
+                    }
+                }
+
+                if (sameCount > 5) {
+                    lostPoint += (3 + sameCount - 5);
+                }
+            }
+        }
+
+        // LEVEL2
+
+        for (row = 0; row < moduleCount - 1; row++) {
+            for (col = 0; col < moduleCount - 1; col++) {
+                var count = 0;
+                if (qrCode.isDark(row,     col    ) ) count++;
+                if (qrCode.isDark(row + 1, col    ) ) count++;
+                if (qrCode.isDark(row,     col + 1) ) count++;
+                if (qrCode.isDark(row + 1, col + 1) ) count++;
+                if (count === 0 || count === 4) {
+                    lostPoint += 3;
+                }
+            }
+        }
+
+        // LEVEL3
+
+        for (row = 0; row < moduleCount; row++) {
+            for (col = 0; col < moduleCount - 6; col++) {
+                if (qrCode.isDark(row, col) && 
+                        !qrCode.isDark(row, col + 1) && 
+                         qrCode.isDark(row, col + 2) && 
+                         qrCode.isDark(row, col + 3) && 
+                         qrCode.isDark(row, col + 4) && 
+                        !qrCode.isDark(row, col + 5) && 
+                         qrCode.isDark(row, col + 6) ) {
+                    lostPoint += 40;
+                }
+            }
+        }
+
+        for (col = 0; col < moduleCount; col++) {
+            for (row = 0; row < moduleCount - 6; row++) {
+                if (qrCode.isDark(row, col) &&
+                        !qrCode.isDark(row + 1, col) &&
+                         qrCode.isDark(row + 2, col) &&
+                         qrCode.isDark(row + 3, col) &&
+                         qrCode.isDark(row + 4, col) &&
+                        !qrCode.isDark(row + 5, col) &&
+                         qrCode.isDark(row + 6, col) ) {
+                    lostPoint += 40;
+                }
+            }
+        }
+
+        // LEVEL4
+        
+        var darkCount = 0;
+
+        for (col = 0; col < moduleCount; col++) {
+            for (row = 0; row < moduleCount; row++) {
+                if (qrCode.isDark(row, col) ) {
+                    darkCount++;
+                }
+            }
+        }
+        
+        var ratio = Math.abs(100 * darkCount / moduleCount / moduleCount - 50) / 5;
+        lostPoint += ratio * 10;
+
+        return lostPoint;       
+    }
+
+};
+
+module.exports = QRUtil;
+
+});
+def('QRRSBlock',function(module,exports,require){
+var QRErrorCorrectLevel = require('./QRErrorCorrectLevel');
+
+function QRRSBlock(totalCount, dataCount) {
+	this.totalCount = totalCount;
+	this.dataCount  = dataCount;
+}
+
+QRRSBlock.RS_BLOCK_TABLE = [
+
+	// L
+	// M
+	// Q
+	// H
+
+	// 1
+	[1, 26, 19],
+	[1, 26, 16],
+	[1, 26, 13],
+	[1, 26, 9],
+	
+	// 2
+	[1, 44, 34],
+	[1, 44, 28],
+	[1, 44, 22],
+	[1, 44, 16],
+
+	// 3
+	[1, 70, 55],
+	[1, 70, 44],
+	[2, 35, 17],
+	[2, 35, 13],
+
+	// 4		
+	[1, 100, 80],
+	[2, 50, 32],
+	[2, 50, 24],
+	[4, 25, 9],
+	
+	// 5
+	[1, 134, 108],
+	[2, 67, 43],
+	[2, 33, 15, 2, 34, 16],
+	[2, 33, 11, 2, 34, 12],
+	
+	// 6
+	[2, 86, 68],
+	[4, 43, 27],
+	[4, 43, 19],
+	[4, 43, 15],
+	
+	// 7		
+	[2, 98, 78],
+	[4, 49, 31],
+	[2, 32, 14, 4, 33, 15],
+	[4, 39, 13, 1, 40, 14],
+	
+	// 8
+	[2, 121, 97],
+	[2, 60, 38, 2, 61, 39],
+	[4, 40, 18, 2, 41, 19],
+	[4, 40, 14, 2, 41, 15],
+	
+	// 9
+	[2, 146, 116],
+	[3, 58, 36, 2, 59, 37],
+	[4, 36, 16, 4, 37, 17],
+	[4, 36, 12, 4, 37, 13],
+	
+	// 10		
+	[2, 86, 68, 2, 87, 69],
+	[4, 69, 43, 1, 70, 44],
+	[6, 43, 19, 2, 44, 20],
+	[6, 43, 15, 2, 44, 16],
+
+	// 11
+	[4, 101, 81],
+	[1, 80, 50, 4, 81, 51],
+	[4, 50, 22, 4, 51, 23],
+	[3, 36, 12, 8, 37, 13],
+
+	// 12
+	[2, 116, 92, 2, 117, 93],
+	[6, 58, 36, 2, 59, 37],
+	[4, 46, 20, 6, 47, 21],
+	[7, 42, 14, 4, 43, 15],
+
+	// 13
+	[4, 133, 107],
+	[8, 59, 37, 1, 60, 38],
+	[8, 44, 20, 4, 45, 21],
+	[12, 33, 11, 4, 34, 12],
+
+	// 14
+	[3, 145, 115, 1, 146, 116],
+	[4, 64, 40, 5, 65, 41],
+	[11, 36, 16, 5, 37, 17],
+	[11, 36, 12, 5, 37, 13],
+
+	// 15
+	[5, 109, 87, 1, 110, 88],
+	[5, 65, 41, 5, 66, 42],
+	[5, 54, 24, 7, 55, 25],
+	[11, 36, 12],
+
+	// 16
+	[5, 122, 98, 1, 123, 99],
+	[7, 73, 45, 3, 74, 46],
+	[15, 43, 19, 2, 44, 20],
+	[3, 45, 15, 13, 46, 16],
+
+	// 17
+	[1, 135, 107, 5, 136, 108],
+	[10, 74, 46, 1, 75, 47],
+	[1, 50, 22, 15, 51, 23],
+	[2, 42, 14, 17, 43, 15],
+
+	// 18
+	[5, 150, 120, 1, 151, 121],
+	[9, 69, 43, 4, 70, 44],
+	[17, 50, 22, 1, 51, 23],
+	[2, 42, 14, 19, 43, 15],
+
+	// 19
+	[3, 141, 113, 4, 142, 114],
+	[3, 70, 44, 11, 71, 45],
+	[17, 47, 21, 4, 48, 22],
+	[9, 39, 13, 16, 40, 14],
+
+	// 20
+	[3, 135, 107, 5, 136, 108],
+	[3, 67, 41, 13, 68, 42],
+	[15, 54, 24, 5, 55, 25],
+	[15, 43, 15, 10, 44, 16],
+
+	// 21
+	[4, 144, 116, 4, 145, 117],
+	[17, 68, 42],
+	[17, 50, 22, 6, 51, 23],
+	[19, 46, 16, 6, 47, 17],
+
+	// 22
+	[2, 139, 111, 7, 140, 112],
+	[17, 74, 46],
+	[7, 54, 24, 16, 55, 25],
+	[34, 37, 13],
+
+	// 23
+	[4, 151, 121, 5, 152, 122],
+	[4, 75, 47, 14, 76, 48],
+	[11, 54, 24, 14, 55, 25],
+	[16, 45, 15, 14, 46, 16],
+
+	// 24
+	[6, 147, 117, 4, 148, 118],
+	[6, 73, 45, 14, 74, 46],
+	[11, 54, 24, 16, 55, 25],
+	[30, 46, 16, 2, 47, 17],
+
+	// 25
+	[8, 132, 106, 4, 133, 107],
+	[8, 75, 47, 13, 76, 48],
+	[7, 54, 24, 22, 55, 25],
+	[22, 45, 15, 13, 46, 16],
+
+	// 26
+	[10, 142, 114, 2, 143, 115],
+	[19, 74, 46, 4, 75, 47],
+	[28, 50, 22, 6, 51, 23],
+	[33, 46, 16, 4, 47, 17],
+
+	// 27
+	[8, 152, 122, 4, 153, 123],
+	[22, 73, 45, 3, 74, 46],
+	[8, 53, 23, 26, 54, 24],
+	[12, 45, 15, 28, 46, 16],
+
+	// 28
+	[3, 147, 117, 10, 148, 118],
+	[3, 73, 45, 23, 74, 46],
+	[4, 54, 24, 31, 55, 25],
+	[11, 45, 15, 31, 46, 16],
+
+	// 29
+	[7, 146, 116, 7, 147, 117],
+	[21, 73, 45, 7, 74, 46],
+	[1, 53, 23, 37, 54, 24],
+	[19, 45, 15, 26, 46, 16],
+
+	// 30
+	[5, 145, 115, 10, 146, 116],
+	[19, 75, 47, 10, 76, 48],
+	[15, 54, 24, 25, 55, 25],
+	[23, 45, 15, 25, 46, 16],
+
+	// 31
+	[13, 145, 115, 3, 146, 116],
+	[2, 74, 46, 29, 75, 47],
+	[42, 54, 24, 1, 55, 25],
+	[23, 45, 15, 28, 46, 16],
+
+	// 32
+	[17, 145, 115],
+	[10, 74, 46, 23, 75, 47],
+	[10, 54, 24, 35, 55, 25],
+	[19, 45, 15, 35, 46, 16],
+
+	// 33
+	[17, 145, 115, 1, 146, 116],
+	[14, 74, 46, 21, 75, 47],
+	[29, 54, 24, 19, 55, 25],
+	[11, 45, 15, 46, 46, 16],
+
+	// 34
+	[13, 145, 115, 6, 146, 116],
+	[14, 74, 46, 23, 75, 47],
+	[44, 54, 24, 7, 55, 25],
+	[59, 46, 16, 1, 47, 17],
+
+	// 35
+	[12, 151, 121, 7, 152, 122],
+	[12, 75, 47, 26, 76, 48],
+	[39, 54, 24, 14, 55, 25],
+	[22, 45, 15, 41, 46, 16],
+
+	// 36
+	[6, 151, 121, 14, 152, 122],
+	[6, 75, 47, 34, 76, 48],
+	[46, 54, 24, 10, 55, 25],
+	[2, 45, 15, 64, 46, 16],
+
+	// 37
+	[17, 152, 122, 4, 153, 123],
+	[29, 74, 46, 14, 75, 47],
+	[49, 54, 24, 10, 55, 25],
+	[24, 45, 15, 46, 46, 16],
+
+	// 38
+	[4, 152, 122, 18, 153, 123],
+	[13, 74, 46, 32, 75, 47],
+	[48, 54, 24, 14, 55, 25],
+	[42, 45, 15, 32, 46, 16],
+
+	// 39
+	[20, 147, 117, 4, 148, 118],
+	[40, 75, 47, 7, 76, 48],
+	[43, 54, 24, 22, 55, 25],
+	[10, 45, 15, 67, 46, 16],
+
+	// 40
+	[19, 148, 118, 6, 149, 119],
+	[18, 75, 47, 31, 76, 48],
+	[34, 54, 24, 34, 55, 25],
+	[20, 45, 15, 61, 46, 16]
+];
+
+QRRSBlock.getRSBlocks = function(typeNumber, errorCorrectLevel) {
+	
+	var rsBlock = QRRSBlock.getRsBlockTable(typeNumber, errorCorrectLevel);
+	
+	if (rsBlock === undefined) {
+		throw new Error("bad rs block @ typeNumber:" + typeNumber + "/errorCorrectLevel:" + errorCorrectLevel);
+	}
+
+	var length = rsBlock.length / 3;
+	
+	var list = [];
+	
+	for (var i = 0; i < length; i++) {
+
+		var count = rsBlock[i * 3 + 0];
+		var totalCount = rsBlock[i * 3 + 1];
+		var dataCount  = rsBlock[i * 3 + 2];
+
+		for (var j = 0; j < count; j++) {
+			list.push(new QRRSBlock(totalCount, dataCount) );	
+		}
+	}
+	
+	return list;
+};
+
+QRRSBlock.getRsBlockTable = function(typeNumber, errorCorrectLevel) {
+
+	switch(errorCorrectLevel) {
+	case QRErrorCorrectLevel.L :
+		return QRRSBlock.RS_BLOCK_TABLE[(typeNumber - 1) * 4 + 0];
+	case QRErrorCorrectLevel.M :
+		return QRRSBlock.RS_BLOCK_TABLE[(typeNumber - 1) * 4 + 1];
+	case QRErrorCorrectLevel.Q :
+		return QRRSBlock.RS_BLOCK_TABLE[(typeNumber - 1) * 4 + 2];
+	case QRErrorCorrectLevel.H :
+		return QRRSBlock.RS_BLOCK_TABLE[(typeNumber - 1) * 4 + 3];
+	default :
+		return undefined;
+	}
+};
+
+module.exports = QRRSBlock;
+
+});
+def('index',function(module,exports,require){
+//---------------------------------------------------------------------
+// QRCode for JavaScript
+//
+// Copyright (c) 2009 Kazuhiko Arase
+//
+// URL: http://www.d-project.com/
+//
+// Licensed under the MIT license:
+//   http://www.opensource.org/licenses/mit-license.php
+//
+// The word "QR Code" is registered trademark of 
+// DENSO WAVE INCORPORATED
+//   http://www.denso-wave.com/qrcode/faqpatent-e.html
+//
+//---------------------------------------------------------------------
+// Modified to work in node for this project (and some refactoring)
+//---------------------------------------------------------------------
+
+var QR8bitByte = require('./QR8bitByte');
+var QRUtil = require('./QRUtil');
+var QRPolynomial = require('./QRPolynomial');
+var QRRSBlock = require('./QRRSBlock');
+var QRBitBuffer = require('./QRBitBuffer');
+
+function QRCode(typeNumber, errorCorrectLevel) {
+	this.typeNumber = typeNumber;
+	this.errorCorrectLevel = errorCorrectLevel;
+	this.modules = null;
+	this.moduleCount = 0;
+	this.dataCache = null;
+	this.dataList = [];
+}
+
+QRCode.prototype = {
+	
+	addData : function(data) {
+		var newData = new QR8bitByte(data);
+		this.dataList.push(newData);
+		this.dataCache = null;
+	},
+	
+	isDark : function(row, col) {
+		if (row < 0 || this.moduleCount <= row || col < 0 || this.moduleCount <= col) {
+			throw new Error(row + "," + col);
+		}
+		return this.modules[row][col];
+	},
+
+	getModuleCount : function() {
+		return this.moduleCount;
+	},
+	
+	make : function() {
+		// Calculate automatically typeNumber if provided is < 1
+		if (this.typeNumber < 1 ){
+			var typeNumber = 1;
+			for (typeNumber = 1; typeNumber < 40; typeNumber++) {
+				var rsBlocks = QRRSBlock.getRSBlocks(typeNumber, this.errorCorrectLevel);
+
+				var buffer = new QRBitBuffer();
+				var totalDataCount = 0;
+				for (var i = 0; i < rsBlocks.length; i++) {
+					totalDataCount += rsBlocks[i].dataCount;
+				}
+
+				for (var x = 0; x < this.dataList.length; x++) {
+					var data = this.dataList[x];
+					buffer.put(data.mode, 4);
+					buffer.put(data.getLength(), QRUtil.getLengthInBits(data.mode, typeNumber) );
+					data.write(buffer);
+				}
+				if (buffer.getLengthInBits() <= totalDataCount * 8)
+					break;
+			}
+			this.typeNumber = typeNumber;
+		}
+		this.makeImpl(false, this.getBestMaskPattern() );
+	},
+	
+	makeImpl : function(test, maskPattern) {
+		
+		this.moduleCount = this.typeNumber * 4 + 17;
+		this.modules = new Array(this.moduleCount);
+		
+		for (var row = 0; row < this.moduleCount; row++) {
+			
+			this.modules[row] = new Array(this.moduleCount);
+			
+			for (var col = 0; col < this.moduleCount; col++) {
+				this.modules[row][col] = null;//(col + row) % 3;
+			}
+		}
+	
+		this.setupPositionProbePattern(0, 0);
+		this.setupPositionProbePattern(this.moduleCount - 7, 0);
+		this.setupPositionProbePattern(0, this.moduleCount - 7);
+		this.setupPositionAdjustPattern();
+		this.setupTimingPattern();
+		this.setupTypeInfo(test, maskPattern);
+		
+		if (this.typeNumber >= 7) {
+			this.setupTypeNumber(test);
+		}
+	
+		if (this.dataCache === null) {
+			this.dataCache = QRCode.createData(this.typeNumber, this.errorCorrectLevel, this.dataList);
+		}
+	
+		this.mapData(this.dataCache, maskPattern);
+	},
+
+	setupPositionProbePattern : function(row, col)  {
+		
+		for (var r = -1; r <= 7; r++) {
+			
+			if (row + r <= -1 || this.moduleCount <= row + r) continue;
+			
+			for (var c = -1; c <= 7; c++) {
+				
+				if (col + c <= -1 || this.moduleCount <= col + c) continue;
+				
+				if ( (0 <= r && r <= 6 && (c === 0 || c === 6) ) || 
+                     (0 <= c && c <= 6 && (r === 0 || r === 6) ) || 
+                     (2 <= r && r <= 4 && 2 <= c && c <= 4) ) {
+					this.modules[row + r][col + c] = true;
+				} else {
+					this.modules[row + r][col + c] = false;
+				}
+			}		
+		}		
+	},
+	
+	getBestMaskPattern : function() {
+	
+		var minLostPoint = 0;
+		var pattern = 0;
+	
+		for (var i = 0; i < 8; i++) {
+			
+			this.makeImpl(true, i);
+	
+			var lostPoint = QRUtil.getLostPoint(this);
+	
+			if (i === 0 || minLostPoint >  lostPoint) {
+				minLostPoint = lostPoint;
+				pattern = i;
+			}
+		}
+	
+		return pattern;
+	},
+	
+	createMovieClip : function(target_mc, instance_name, depth) {
+	
+		var qr_mc = target_mc.createEmptyMovieClip(instance_name, depth);
+		var cs = 1;
+	
+		this.make();
+
+		for (var row = 0; row < this.modules.length; row++) {
+			
+			var y = row * cs;
+			
+			for (var col = 0; col < this.modules[row].length; col++) {
+	
+				var x = col * cs;
+				var dark = this.modules[row][col];
+			
+				if (dark) {
+					qr_mc.beginFill(0, 100);
+					qr_mc.moveTo(x, y);
+					qr_mc.lineTo(x + cs, y);
+					qr_mc.lineTo(x + cs, y + cs);
+					qr_mc.lineTo(x, y + cs);
+					qr_mc.endFill();
+				}
+			}
+		}
+		
+		return qr_mc;
+	},
+
+	setupTimingPattern : function() {
+		
+		for (var r = 8; r < this.moduleCount - 8; r++) {
+			if (this.modules[r][6] !== null) {
+				continue;
+			}
+			this.modules[r][6] = (r % 2 === 0);
+		}
+	
+		for (var c = 8; c < this.moduleCount - 8; c++) {
+			if (this.modules[6][c] !== null) {
+				continue;
+			}
+			this.modules[6][c] = (c % 2 === 0);
+		}
+	},
+	
+	setupPositionAdjustPattern : function() {
+	
+		var pos = QRUtil.getPatternPosition(this.typeNumber);
+		
+		for (var i = 0; i < pos.length; i++) {
+		
+			for (var j = 0; j < pos.length; j++) {
+			
+				var row = pos[i];
+				var col = pos[j];
+				
+				if (this.modules[row][col] !== null) {
+					continue;
+				}
+				
+				for (var r = -2; r <= 2; r++) {
+				
+					for (var c = -2; c <= 2; c++) {
+					
+						if (Math.abs(r) === 2 || 
+                            Math.abs(c) === 2 ||
+                            (r === 0 && c === 0) ) {
+							this.modules[row + r][col + c] = true;
+						} else {
+							this.modules[row + r][col + c] = false;
+						}
+					}
+				}
+			}
+		}
+	},
+	
+	setupTypeNumber : function(test) {
+	
+		var bits = QRUtil.getBCHTypeNumber(this.typeNumber);
+        var mod;
+	
+		for (var i = 0; i < 18; i++) {
+			mod = (!test && ( (bits >> i) & 1) === 1);
+			this.modules[Math.floor(i / 3)][i % 3 + this.moduleCount - 8 - 3] = mod;
+		}
+	
+		for (var x = 0; x < 18; x++) {
+			mod = (!test && ( (bits >> x) & 1) === 1);
+			this.modules[x % 3 + this.moduleCount - 8 - 3][Math.floor(x / 3)] = mod;
+		}
+	},
+	
+	setupTypeInfo : function(test, maskPattern) {
+	
+		var data = (this.errorCorrectLevel << 3) | maskPattern;
+		var bits = QRUtil.getBCHTypeInfo(data);
+        var mod;
+	
+		// vertical		
+		for (var v = 0; v < 15; v++) {
+	
+			mod = (!test && ( (bits >> v) & 1) === 1);
+	
+			if (v < 6) {
+				this.modules[v][8] = mod;
+			} else if (v < 8) {
+				this.modules[v + 1][8] = mod;
+			} else {
+				this.modules[this.moduleCount - 15 + v][8] = mod;
+			}
+		}
+	
+		// horizontal
+		for (var h = 0; h < 15; h++) {
+	
+			mod = (!test && ( (bits >> h) & 1) === 1);
+			
+			if (h < 8) {
+				this.modules[8][this.moduleCount - h - 1] = mod;
+			} else if (h < 9) {
+				this.modules[8][15 - h - 1 + 1] = mod;
+			} else {
+				this.modules[8][15 - h - 1] = mod;
+			}
+		}
+	
+		// fixed module
+		this.modules[this.moduleCount - 8][8] = (!test);
+	
+	},
+	
+	mapData : function(data, maskPattern) {
+		
+		var inc = -1;
+		var row = this.moduleCount - 1;
+		var bitIndex = 7;
+		var byteIndex = 0;
+		
+		for (var col = this.moduleCount - 1; col > 0; col -= 2) {
+	
+			if (col === 6) col--;
+	
+			while (true) {
+	
+				for (var c = 0; c < 2; c++) {
+					
+					if (this.modules[row][col - c] === null) {
+						
+						var dark = false;
+	
+						if (byteIndex < data.length) {
+							dark = ( ( (data[byteIndex] >>> bitIndex) & 1) === 1);
+						}
+	
+						var mask = QRUtil.getMask(maskPattern, row, col - c);
+	
+						if (mask) {
+							dark = !dark;
+						}
+						
+						this.modules[row][col - c] = dark;
+						bitIndex--;
+	
+						if (bitIndex === -1) {
+							byteIndex++;
+							bitIndex = 7;
+						}
+					}
+				}
+								
+				row += inc;
+	
+				if (row < 0 || this.moduleCount <= row) {
+					row -= inc;
+					inc = -inc;
+					break;
+				}
+			}
+		}
+		
+	}
+
+};
+
+QRCode.PAD0 = 0xEC;
+QRCode.PAD1 = 0x11;
+
+QRCode.createData = function(typeNumber, errorCorrectLevel, dataList) {
+	
+	var rsBlocks = QRRSBlock.getRSBlocks(typeNumber, errorCorrectLevel);
+	
+	var buffer = new QRBitBuffer();
+	
+	for (var i = 0; i < dataList.length; i++) {
+		var data = dataList[i];
+		buffer.put(data.mode, 4);
+		buffer.put(data.getLength(), QRUtil.getLengthInBits(data.mode, typeNumber) );
+		data.write(buffer);
+	}
+
+	// calc num max data.
+	var totalDataCount = 0;
+	for (var x = 0; x < rsBlocks.length; x++) {
+		totalDataCount += rsBlocks[x].dataCount;
+	}
+
+	if (buffer.getLengthInBits() > totalDataCount * 8) {
+		throw new Error("code length overflow. (" + 
+            buffer.getLengthInBits() + 
+            ">" +  
+            totalDataCount * 8 + 
+            ")");
+	}
+
+	// end code
+	if (buffer.getLengthInBits() + 4 <= totalDataCount * 8) {
+		buffer.put(0, 4);
+	}
+
+	// padding
+	while (buffer.getLengthInBits() % 8 !== 0) {
+		buffer.putBit(false);
+	}
+
+	// padding
+	while (true) {
+		
+		if (buffer.getLengthInBits() >= totalDataCount * 8) {
+			break;
+		}
+		buffer.put(QRCode.PAD0, 8);
+		
+		if (buffer.getLengthInBits() >= totalDataCount * 8) {
+			break;
+		}
+		buffer.put(QRCode.PAD1, 8);
+	}
+
+	return QRCode.createBytes(buffer, rsBlocks);
+};
+
+QRCode.createBytes = function(buffer, rsBlocks) {
+
+	var offset = 0;
+	
+	var maxDcCount = 0;
+	var maxEcCount = 0;
+	
+	var dcdata = new Array(rsBlocks.length);
+	var ecdata = new Array(rsBlocks.length);
+	
+	for (var r = 0; r < rsBlocks.length; r++) {
+
+		var dcCount = rsBlocks[r].dataCount;
+		var ecCount = rsBlocks[r].totalCount - dcCount;
+
+		maxDcCount = Math.max(maxDcCount, dcCount);
+		maxEcCount = Math.max(maxEcCount, ecCount);
+		
+		dcdata[r] = new Array(dcCount);
+		
+		for (var i = 0; i < dcdata[r].length; i++) {
+			dcdata[r][i] = 0xff & buffer.buffer[i + offset];
+		}
+		offset += dcCount;
+		
+		var rsPoly = QRUtil.getErrorCorrectPolynomial(ecCount);
+		var rawPoly = new QRPolynomial(dcdata[r], rsPoly.getLength() - 1);
+
+		var modPoly = rawPoly.mod(rsPoly);
+		ecdata[r] = new Array(rsPoly.getLength() - 1);
+		for (var x = 0; x < ecdata[r].length; x++) {
+            var modIndex = x + modPoly.getLength() - ecdata[r].length;
+			ecdata[r][x] = (modIndex >= 0)? modPoly.get(modIndex) : 0;
+		}
+
+	}
+	
+	var totalCodeCount = 0;
+	for (var y = 0; y < rsBlocks.length; y++) {
+		totalCodeCount += rsBlocks[y].totalCount;
+	}
+
+	var data = new Array(totalCodeCount);
+	var index = 0;
+
+	for (var z = 0; z < maxDcCount; z++) {
+		for (var s = 0; s < rsBlocks.length; s++) {
+			if (z < dcdata[s].length) {
+				data[index++] = dcdata[s][z];
+			}
+		}
+	}
+
+	for (var xx = 0; xx < maxEcCount; xx++) {
+		for (var t = 0; t < rsBlocks.length; t++) {
+			if (xx < ecdata[t].length) {
+				data[index++] = ecdata[t][xx];
+			}
+		}
+	}
+
+	return data;
+
+};
+
+module.exports = QRCode;
+
+});
+return {QRCode:req('./index'),Math:req('./QRMath'),RS:req('./QRRSBlock'),Util:req('./QRUtil')}})();
+const QRD=(function(){
+ const EX=QRB.Math.EXP_TABLE,LG=QRB.Math.LOG_TABLE,gm=(a,b)=>(a&&b)?EX[(LG[a]+LG[b])%255]:0,gi=a=>EX[(255-LG[a])%255];
+ const G15=QRB.Util.G15,G15M=QRB.Util.G15_MASK;
+ function otsu(vals,n){const h=new Float64Array(256);for(let i=0;i<n;i++)h[Math.max(0,Math.min(255,Math.round(vals[i])))]++;let sum=0;for(let i=0;i<256;i++)sum+=i*h[i];let sB=0,wB=0,best=-1,th=128;for(let t=0;t<256;t++){wB+=h[t];if(!wB)continue;const wF=n-wB;if(!wF)break;sB+=t*h[t];const mB=sB/wB,mF=(sum-sB)/wF,v=wB*wF*(mB-mF)*(mB-mF);if(v>best){best=v;th=t}}return th+0.5}
+ function vcheck(g,w,h,x,y,m,th){const d=yy=>g[yy*w+x]<th;let up=y,dk=0;while(up>=0&&d(up)){dk++;up--}if(up<0)return null;let l1=0;while(up>=0&&!d(up)){l1++;up--}if(up<0)return null;let o1=0;while(up>=0&&d(up)){o1++;up--}
+  let dn=y+1;while(dn<h&&d(dn)){dk++;dn++}if(dn>=h)return null;let l2=0;while(dn<h&&!d(dn)){l2++;dn++}if(dn>=h)return null;let o2=0;while(dn<h&&d(dn)){o2++;dn++}
+  const t=dk+l1+l2+o1+o2,mm=t/7,tol=mm*.7;if(Math.abs(mm-m)>m*.5)return null;if(Math.abs(l1-mm)>tol||Math.abs(l2-mm)>tol||Math.abs(o1-mm)>tol||Math.abs(o2-mm)>tol||Math.abs(dk-3*mm)>3*tol)return null;
+  return{y:(up+1+dn-1+1)/2,m:mm}}
+ function candidates(g,w,h,th){const C=[];for(let y=0;y<h;y++){const row=y*w,st=[],ln=[],col=[];let cur=g[row]<th?1:0,s=0;for(let x=1;x<w;x++){const v=g[row+x]<th?1:0;if(v!==cur){st.push(s);ln.push(x-s);col.push(cur);cur=v;s=x}}st.push(s);ln.push(w-s);col.push(cur);
+   for(let i=0;i+4<ln.length;i++){if(!col[i])continue;const a=ln[i],b=ln[i+1],c=ln[i+2],d=ln[i+3],e=ln[i+4],t=a+b+c+d+e;if(t<14)continue;const m=t/7,tol=m*.7;
+    if(Math.abs(a-m)<tol&&Math.abs(b-m)<tol&&Math.abs(c-3*m)<3*tol&&Math.abs(d-m)<tol&&Math.abs(e-m)<tol){const cx=st[i]+t/2,vy=vcheck(g,w,h,Math.min(w-1,Math.floor(cx)),y,m,th);if(vy)C.push({x:cx,y:vy.y,m:(m+vy.m)/2})}}}
+  const K=[];C.forEach(p=>{let k=K.find(q=>Math.hypot(q.x/q.n-p.x,q.y/q.n-p.y)<Math.max(q.m/q.n,p.m)*1.5);if(!k){k={x:0,y:0,m:0,n:0};K.push(k)}k.x+=p.x;k.y+=p.y;k.m+=p.m;k.n++});
+  return K.filter(k=>k.n>=2).map(k=>({x:k.x/k.n,y:k.y/k.n,m:k.m/k.n,n:k.n})).sort((a,b)=>b.n-a.n).slice(0,12)}
+ function triples(F){const out=[];for(let i=0;i<F.length;i++)for(let j=i+1;j<F.length;j++)for(let k=j+1;k<F.length;k++){const P=[F[i],F[j],F[k]],ms=P.map(p=>p.m),mn=Math.min(...ms),mx=Math.max(...ms);if(mx>mn*1.4)continue;
+   const d=(a,b)=>Math.hypot(a.x-b.x,a.y-b.y),dd=[[d(P[1],P[2]),0],[d(P[0],P[2]),1],[d(P[0],P[1]),2]].sort((a,b)=>b[0]-a[0]),hyp=dd[0][0],tl=P[dd[0][1]],oth=P.filter(p=>p!==tl),s1=d(tl,oth[0]),s2=d(tl,oth[1]);
+   if(Math.abs(s1-s2)>Math.max(s1,s2)*.18)continue;if(Math.abs(hyp/Math.max(s1,s2)-Math.SQRT2)>.2)continue;
+   const cr=(oth[0].x-tl.x)*(oth[1].y-tl.y)-(oth[0].y-tl.y)*(oth[1].x-tl.x),tr=cr>0?oth[0]:oth[1],bl=cr>0?oth[1]:oth[0];out.push({tl,tr,bl,score:P.reduce((a,p)=>a+p.n,0)})}
+  return out.sort((a,b)=>b.score-a.score)}
+ function sampleMatrix(g,w,h,T){const{tl,tr,bl}=T,m=(tl.m+tr.m+bl.m)/3,D=Math.hypot(tr.x-tl.x,tr.y-tl.y),est=D/m+7;let v=Math.round((est-17)/4);v=Math.max(1,Math.min(40,v));const dim=17+4*v,span=dim-7;
+  const vx=(tr.x-tl.x)/span,vy=(tr.y-tl.y)/span,ux=(bl.x-tl.x)/span,uy=(bl.y-tl.y)/span;
+  const ms=Math.hypot(vx,vy),val=new Float32Array(dim*dim);
+  const px=(x,y)=>{x=Math.round(x);y=Math.round(y);if(x<0||y<0||x>=w||y>=h)return 255;return g[y*w+x]};
+  for(let r=0;r<dim;r++)for(let c=0;c<dim;c++){const cx=tl.x+(c-3)*vx+(r-3)*ux,cy=tl.y+(c-3)*vy+(r-3)*uy,o=ms*.22;
+   val[r*dim+c]=(px(cx,cy)*2+px(cx-o,cy)+px(cx+o,cy)+px(cx,cy-o)+px(cx,cy+o))/6}
+  const th=otsu(val,dim*dim),M=[];for(let r=0;r<dim;r++){M.push([]);for(let c=0;c<dim;c++)M[r].push(val[r*dim+c]<th?1:0)}return{M,dim,v}}
+ function funcMask(dim,v){const f=new Uint8Array(dim*dim),set=(r,c)=>{if(r>=0&&c>=0&&r<dim&&c<dim)f[r*dim+c]=1};for(let r=0;r<9;r++)for(let c=0;c<9;c++)set(r,c);for(let r=0;r<9;r++)for(let c=dim-8;c<dim;c++)set(r,c);for(let r=dim-8;r<dim;r++)for(let c=0;c<9;c++)set(r,c);
+  for(let i=0;i<dim;i++){set(6,i);set(i,6)}
+  const pos=QRB.Util.getPatternPosition(v),n=pos.length;for(let i=0;i<n;i++)for(let j=0;j<n;j++){if((i===0&&j===0)||(i===0&&j===n-1)||(i===n-1&&j===0))continue;for(let r=-2;r<=2;r++)for(let c=-2;c<=2;c++)set(pos[i]+r,pos[j]+c)}
+  if(v>=7)for(let i=0;i<6;i++)for(let j=0;j<3;j++){set(i,dim-11+j);set(dim-11+j,i)}return f}
+ function bch(d){let x=d<<10;const dg=n=>{let k=0;while(n!==0){k++;n>>>=1}return k};while(dg(x)-dg(G15)>=0)x^=G15<<(dg(x)-dg(G15));return((d<<10)|x)^G15M}
+ function formatInfo(M,dim){const rd=copy=>{let b=0;for(let i=0;i<15;i++){let r,c;if(copy===0){c=8;r=i<6?i:i<8?i+1:dim-15+i}else{r=8;c=i<8?dim-i-1:i<9?15-i-1+1:15-i-1}if(M[r][c])b|=1<<i}return b};
+  let best=null,bd=99;for(const cp of[0,1]){const b=rd(cp);for(let d=0;d<32;d++){let x=bch(d)^b,n=0;while(x){n+=x&1;x>>>=1}if(n<bd){bd=n;best=d}}}return bd<=3?best:-1}
+ const MASK=[(r,c)=>(r+c)%2===0,(r,c)=>r%2===0,(r,c)=>c%3===0,(r,c)=>(r+c)%3===0,(r,c)=>(Math.floor(r/2)+Math.floor(c/3))%2===0,(r,c)=>(r*c)%2+(r*c)%3===0,(r,c)=>((r*c)%2+(r*c)%3)%2===0,(r,c)=>((r*c)%3+(r+c)%2)%2===0];
+ function rsFix(r,nec){const n=r.length,S=[];let any=0;for(let j=0;j<nec;j++){let s=0;const a=EX[j];for(let k=0;k<n;k++)s=gm(s,a)^r[k];S.push(s);if(s)any=1}if(!any)return r;
+  let C=[1],B=[1],L=0,m=1,b=1;for(let i=0;i<nec;i++){let d=S[i];for(let k=1;k<=L;k++)d^=gm(C[k]||0,S[i-k]);if(d===0){m++;continue}const T=C.slice(),coef=gm(d,gi(b));for(let k=0;k<B.length;k++){C[k+m]=(C[k+m]||0)^gm(B[k],coef)}if(2*L<=i){L=i+1-L;B=T;b=d;m=1}else m++}
+  const pos=[];for(let p=0;p<n;p++){const x=EX[(255-p%255)%255];let v=0,xp=1;for(let k=0;k<C.length;k++){v^=gm(C[k]||0,xp);xp=gm(xp,x)}if(v===0)pos.push(p)}if(pos.length!==L||L===0)return null;
+  const Om=[];for(let i=0;i<nec;i++){let v=0;for(let k=0;k<=i;k++)v^=gm(C[k]||0,S[i-k]);Om.push(v)}
+  const out=r.slice();for(const p of pos){const xi=EX[(255-p%255)%255],X=EX[p%255];let on=0,xp=1;for(let k=0;k<nec;k++){on^=gm(Om[k],xp);xp=gm(xp,xi)}let de=0;xp=1;for(let k=1;k<C.length;k+=2){de^=gm(C[k]||0,xp);xp=gm(xp,gm(xi,xi))}if(!de)return null;out[n-1-p]^=gm(gm(X,on),gi(de))}
+  for(let j=0;j<nec;j++){let s=0;const a=EX[j];for(let k=0;k<n;k++)s=gm(s,a)^out[k];if(s)return null}return out}
+ function decodeMatrix(M,dim,v){const fi=formatInfo(M,dim);if(fi<0)return null;const ecl=fi>>3,mk=fi&7,f=funcMask(dim,v),bits=[];let up=true;
+  for(let col=dim-1;col>0;col-=2){if(col===6)col--;for(let k=0;k<dim;k++){const r=up?dim-1-k:k;for(let dc=0;dc<2;dc++){const c=col-dc;if(!f[r*dim+c]){let b=M[r][c];if(MASK[mk](r,c))b^=1;bits.push(b)}}}up=!up}
+  const cw=[];for(let i=0;i+8<=bits.length;i+=8){let x=0;for(let j=0;j<8;j++)x=(x<<1)|bits[i+j];cw.push(x)}
+  const blocks=QRB.RS.getRSBlocks(v,ecl);let tot=0;blocks.forEach(b=>tot+=b.totalCount);if(cw.length<tot)return null;
+  const maxD=Math.max(...blocks.map(b=>b.dataCount)),maxE=Math.max(...blocks.map(b=>b.totalCount-b.dataCount)),B=blocks.map(b=>({b,d:[],e:[]}));let idx=0;for(let i=0;i<maxD;i++)B.forEach(k=>{if(i<k.b.dataCount)k.d.push(cw[idx++])});for(let i=0;i<maxE;i++)B.forEach(k=>{if(i<k.b.totalCount-k.b.dataCount)k.e.push(cw[idx++])});
+  const data=[];for(const k of B){const fx=rsFix(k.d.concat(k.e),k.b.totalCount-k.b.dataCount);if(!fx)return null;for(let i=0;i<k.b.dataCount;i++)data.push(fx[i])}
+  let bp=0;const rb=n=>{let x=0;for(let i=0;i<n;i++){const by=data[bp>>3];if(by===undefined)return -1;x=(x<<1)|((by>>(7-(bp&7)))&1);bp++}return x};const out=[];
+  for(;;){const mode=rb(4);if(mode<=0)break;if(mode!==4)return null;const cnt=rb(v<10?8:16);if(cnt<0)return null;for(let i=0;i<cnt;i++){const b=rb(8);if(b<0)return null;out.push(b)}}
+  return Uint8Array.from(out)}
+ function decode(g,w,h){const th=otsu(g,w*h),F=candidates(g,w,h,th);if(F.length<3)return null;for(const T of triples(F).slice(0,6)){try{const s=sampleMatrix(g,w,h,T),res=decodeMatrix(s.M,s.dim,s.v);if(res)return res}catch(e){}}return null}
+ return{decode}})();
+
 const P=[[[0,1],[2,3]],[[0,2],[1,3]],[[0,3],[1,2]]],COL=['#e53935','#1e88e5','#ef6c00','#ab47bc','#00897b'],ME=()=>S.user||'';
 const LOGO='<svg viewBox="0 0 108 108"><rect width="108" height="108" fill="#8FD3F4"/><rect width="108" height="40" fill="#B9E6FA"/><path d="M0,70 Q54,50 108,70 L108,108 L0,108z" fill="#43A047"/><path d="M0,90 Q54,76 108,90 L108,108 L0,108z" fill="#2E7D32"/><ellipse cx="54" cy="92" rx="22" ry="4" fill="#0003"/><path d="M44,70 L64,70 L58,92 L50,92z" fill="#E0A526"/><circle cx="54" cy="52" r="20" fill="#fff" stroke="#CFD8DC" stroke-width="1.5"/><g fill="#CFD8DC"><circle cx="46" cy="45" r="2.5"/><circle cx="57" cy="42" r="2.5"/><circle cx="51" cy="54" r="2.5"/><circle cx="63" cy="53" r="2.5"/><circle cx="44" cy="60" r="2.5"/><circle cx="58" cy="63" r="2.5"/></g></svg>';
 const $=id=>document.getElementById(id),won=n=>Number(n).toLocaleString('ko-KR')+'원';
@@ -79,9 +1391,10 @@ const today=()=>{const d=new Date();return d.getFullYear()+'-'+String(d.getMonth
 const dot=i=>`<span class="dot" style="background:${COL[i]}">${i+1}</span>`,sg=d=>(d>0?'+':'')+d;
 let HIST=[];try{HIST=JSON.parse(localStorage.getItem('gg_hist')||'[]')}catch(e){}
 try{let ch=false;HIST.forEach(x=>{if(x.d&&x.d.phones){delete x.d.phones;ch=true}});if(ch)localStorage.setItem('gg_hist',JSON.stringify(HIST))}catch(e){}
+function tmLoad(){try{return JSON.parse(localStorage.getItem('gg_tm')||'null')}catch(e){return null}}
 function loadUser(){try{return localStorage.getItem('gg_user')||''}catch(e){return ''}}
 const Z=()=>({cur:{par:4,d:[0,0,0,0,0],ta:[],mu:1},holes:[],nav:null,cc:false,bs:null,be:null,askEnd:false,pa:[],pzAsk:false,pzSkip:false});
-let S={scr:'setup',user:loadUser(),userEdit:false,userDraft:null,userErr:'',infoOk:false,infoErr:'',n:4,v3:false,src:'',tapAmt:'',tapCur:'₩',hm:{},hs:false,cc:false,bs:null,be:null,askEnd:false,pm:null,pz:'',pe:'',pa:[],pzAsk:false,pzSkip:false,pc:'₩',rotOpen:false,sel:{ind:null,team:null},cat:null,vc:{동수:{f:'파',e:{}},동우:{f:'보기',e:{}},동미:{f:'더블보기',e:{}}},names:['','','','',''],mode:'fine',total:40000,spread:20000,fine:10000,tie:5000,rounds:18,rs:1,ver:2,ph:[0,0,0,0,0],th:{A:0,B:0},rw:['','','','',''],tw:'',tl:'',date:'',course:'',me:0,hcp:{},...Z(),err:'',note:'',ask:false,del:-1,open:false,start:''};
+let S={scr:'setup',userAsk:false,bkMsg:'',tmI:null,tmSel:-1,tmImpMsg:'',tmImpErr:'',tmDone:'',tm:tmLoad(),tmd:null,tmT:0,tmOpen:{},tmAsk:false,tmMsg:'',tmImgUrl:'',user:loadUser(),userEdit:false,userDraft:null,userErr:'',infoOk:false,infoErr:'',n:4,v3:false,src:'',tapAmt:'',tapCur:'₩',hm:{},hs:false,cc:false,bs:null,be:null,askEnd:false,pm:null,pz:'',pe:'',pa:[],pzAsk:false,pzSkip:false,pc:'₩',rotOpen:false,sel:{ind:null,team:null},cat:null,vc:{동수:{f:'파',e:{}},동우:{f:'보기',e:{}},동미:{f:'더블보기',e:{}}},names:['','','','',''],mode:'fine',total:40000,spread:20000,fine:10000,tie:5000,rounds:18,rs:1,ver:2,ph:[0,0,0,0,0],th:{A:0,B:0},rw:['','','','',''],tw:'',tl:'',date:'',course:'',me:0,hcp:{},...Z(),err:'',note:'',ask:false,del:-1,open:false,start:''};
 try{const p=JSON.parse(localStorage.getItem('gg_pref')||'null');if(p){if(p.hcp)S.hcp=p.hcp;if(p.total)S.total=p.total;if(p.spread!=null)S.spread=p.spread}}catch(e){}
 const nm=i=>S.names[i];
 let CTXN=0;const NP=()=>CTXN||S.n||4,PI=()=>Array.from({length:NP()},(_,i)=>i);
@@ -393,7 +1706,7 @@ function adj(i,k){if(i===vS()&&S.nav==null){const base=S.cur.par+vD(i,S.cur.par)
 function lab(d){return d<=-3?'알바트로스':d==-2?'이글':d==-1?'버디':d==0?'파':d==1?'보기':d==2?'더블보기':d==3?'트리플보기':'+'+d}
 async function shrink(f){const b=await createImageBitmap(f),k=Math.min(1,1800/Math.max(b.width,b.height)),c=document.createElement('canvas');c.width=Math.round(b.width*k);c.height=Math.round(b.height*k);c.getContext('2d').drawImage(b,0,0,c.width,c.height);return new Promise(r=>c.toBlob(r,'image/jpeg',.85))}
 async function analyze(file){
- if(!file)return;if(S.scr==='view')return cmpCard(file);if(S.mode==='score'&&(S.scr==='sc'||S.scr==='resx'))return analyzeSC(file);if(S.scr==='resx'||S.scr==='xwait'||(S.scr==='batch'&&XM()))return analyzeX(file);if(S.scr==='setup'&&(S.mode==='rank'||S.mode==='team')){if(!validX())return;return analyzeX(file)}if(S.scr==='setup'&&!readForm(false))return;
+ if(!file)return;if(S.scr==='tm_up')return analyzeTG(file);if(S.scr==='view')return cmpCard(file);if(S.mode==='score'&&(S.scr==='sc'||S.scr==='resx'))return analyzeSC(file);if(S.scr==='resx'||S.scr==='xwait'||(S.scr==='batch'&&XM()))return analyzeX(file);if(S.scr==='setup'&&(S.mode==='rank'||S.mode==='team')){if(!validX())return;return analyzeX(file)}if(S.scr==='setup'&&!readForm(false))return;
  const sample=window.claude?await claude.use('sample'):null;
  if(!sample){S.err='사진 분석은 Claude 앱에서 이 앱의 링크를 열었을 때만 쓸 수 있어요. 홀별 입력은 그대로 쓸 수 있어요.';return draw(true)}
  const vs=vS(),real=PI().filter(i=>i!==vs),K=real.length,prev=S.scr,auto=prev==='setup'&&!(real.every(i=>S.names[i])&&new Set(real.map(i=>S.names[i])).size===K);S.scr='busy';draw();
@@ -517,12 +1830,21 @@ function courseVal(){const c=$('cs');if(!c)return S.course||'';let b=c.value.tri
 function csPrev(){const e=$('csp');if(e)e.textContent='저장될 구장명: '+(courseVal()||'-')}
 function userSave(){try{localStorage.setItem('gg_user',S.user)}catch(e){}try{localStorage.setItem('gg_hist',JSON.stringify(HIST))}catch(e){}}
 function userCheck(){snap();const n=String(S.userDraft||'').trim();if(!n){S.userErr='이름을 입력해 주세요.';draw(true);return null}if(n.length>10){S.userErr='이름은 10글자 이하로 입력해 주세요.';draw(true);return null}return n}
-function userSet(){const n=userCheck();if(!n)return;S.user=n;HIST.forEach(x=>{if(x.owner===undefined)x.owner=n});S.userErr='';S.userDraft=null;userSave();draw(true)}
-function userEdit(){snap();S.userEdit=true;S.userDraft=S.user;S.userErr='';draw(true)}
-function userCancel(){snap();S.userEdit=false;S.userDraft=null;S.userErr='';draw(true)}
-function userReset(){const n=userCheck();if(!n)return;if(n===S.user){S.userErr='지금 이름과 같아요. 바꿀 이름을 입력해 주세요.';draw(true);return}S.user=n;S.userEdit=false;S.userDraft=null;S.userErr='';userSave();draw(true)}
-function userBox(){if(S.user&&!S.userEdit)return `<div class="row" style="align-items:center;margin-bottom:10px"><div style="flex:1;min-width:0">👤 사용자 이름 <b style="font-size:17px">${S.user}</b></div><button class="g" style="flex:none;width:auto;margin:0;padding:8px 14px" onclick="userEdit()">✏️ 수정</button></div>`;
- const ed=!!S.user;return `<div class="sub" style="margin-bottom:6px">${ed?'새 이름을 입력하세요. 이름을 바꾸려면 <b>기록관리 리셋</b>을 눌러야 해요. 리셋한 시점부터 바뀐 이름으로 기록과 평균 스코어를 따로 관리하고, 이전 이름의 기록은 그 이름 아래 그대로 남아요.':'내 이름을 입력하면 이 이름으로 기록과 평균 스코어를 관리해요. 게임 참가자 이름에도 같은 이름을 써 주세요.'}</div><input id="un" value="${S.userDraft!=null?S.userDraft:(S.user||'')}" placeholder="사용자 이름 (예: 홍길동)" maxlength="10">${S.userErr?`<div class="err" style="margin-top:8px">⚠️ ${S.userErr}</div>`:''}${ed?'<div class="row" style="margin-top:8px"><button class="g" onclick="userCancel()">취소</button><button class="r" onclick="userReset()">🔄 기록관리 리셋</button></div>':'<button style="margin-top:8px" onclick="userSet()">✔ 입력</button>'}<div style="height:8px"></div>`}
+function userSet(){const n=userCheck();if(!n)return;S.userDraft=n;S.userAsk=true;S.userErr='';draw(true)}
+function userConfirm(){const n=S.userDraft;if(!n)return;S.user=n;HIST.forEach(x=>{if(x.owner===undefined)x.owner=n});S.userAsk=false;S.userDraft=null;S.userErr='';userSave();draw(true)}
+function userCancel(){S.userAsk=false;S.userErr='';draw(true)}
+function userBox(){if(S.user)return `<div style="margin-bottom:10px">👤 사용자 이름 <b style="font-size:17px">${S.user}</b> <span class="sub">(바꿀 수 없어요)</span></div>`;
+ if(S.userAsk)return `<div class="msg" style="text-align:left;margin-bottom:10px">'<b>${S.userDraft}</b>'(으)로 확정할까요?<br><span class="sub">이름은 앱을 처음 쓸 때 한 번만 입력할 수 있고, 나중에 바꿀 수 없어요.</span></div><div class="row"><button class="g" onclick="userCancel()">다시 입력</button><button onclick="userConfirm()">✔ 확정</button></div><div style="height:8px"></div>`;
+ return `<div class="sub" style="margin-bottom:6px">내 이름을 입력하면 이 이름으로 기록과 평균 스코어를 관리해요. 이름은 <b>처음 한 번만</b> 입력할 수 있고 나중에 바꿀 수 없어요. 게임 참가자 이름에도 같은 이름을 써 주세요.</div><input id="un" value="${S.userDraft!=null?S.userDraft:''}" placeholder="사용자 이름 (예: 홍길동)" maxlength="10">${S.userErr?`<div class="err" style="margin-top:8px">⚠️ ${S.userErr}</div>`:''}<button style="margin-top:8px" onclick="userSet()">✔ 입력</button><div style="height:8px"></div>`}
+function bkSave(){try{const o={app:'BG',v:1,user:S.user,when:new Date().toISOString(),hist:HIST,tm:S.tm||null},blob=new Blob([JSON.stringify(o)],{type:'text/plain'}),a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='BG-backup-'+today().replace(/-/g,'')+'.txt';document.body.appendChild(a);a.click();setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove()},1500);try{localStorage.setItem('gg_bk',today())}catch(e){}S.bkMsg='백업 파일을 저장했어요 (다운로드 폴더). 카카오톡 나와의 채팅 등에 보관해 두세요.'}catch(e){S.bkMsg='백업 파일을 저장하지 못했어요.'}draw(true)}
+async function bkRestore(file){if(!file)return;try{const o=JSON.parse(await file.text());if(!o||o.app!=='BG'||!Array.isArray(o.hist))throw 0;
+ if(S.user&&o.user&&S.user!==o.user){S.bkMsg='이 백업은 다른 이름('+o.user+')의 기록이에요. 이 앱의 이름('+S.user+')과 같아야 복원할 수 있어요.';return draw(true)}
+ if(!S.user&&o.user){S.user=o.user;try{localStorage.setItem('gg_user',S.user)}catch(e){}}
+ const sig=x=>JSON.stringify([x.owner,x.date,x.course,x.score,x.holes,x.mode||'',x.tm&&x.tm.id||'']),have=new Set(HIST.map(sig));let add=0;o.hist.forEach(x=>{if(x&&x.date){if(x.owner===undefined)x.owner=S.user;if(!have.has(sig(x))){HIST.push(x);have.add(sig(x));add++}}});
+ HIST.forEach(x=>{if(x.owner===undefined)x.owner=S.user});try{localStorage.setItem('gg_hist',JSON.stringify(HIST))}catch(e){}
+ if(!S.tm&&o.tm&&o.tm.g){S.tm=o.tm;tmSave()}
+ S.bkMsg=add?add+'개의 기록을 복원했어요.':'새로 복원할 기록이 없었어요 (이미 모두 있어요).'}catch(e){S.bkMsg='백업 파일을 읽지 못했어요. BG 앱에서 저장한 백업 파일(.txt)을 골라 주세요.'}draw(true)}
+const bkRow=()=>{let last='';try{last=localStorage.getItem('gg_bk')||''}catch(e){}return `<div class="row" style="margin-top:6px"><button class="g sm" style="flex:1;padding:10px" onclick="bkSave()">💾 백업 저장</button><button class="g sm" style="flex:1;padding:10px" onclick="$('fbk').click()">📥 백업 복원</button></div><div class="sub" style="margin-top:6px">${S.bkMsg?`<b>${S.bkMsg}</b><br>`:''}앱을 새로 설치하거나 폰을 바꿔도 백업 파일로 이름·이력·평균 점수를 되살릴 수 있어요. ${last?'마지막 백업: '+last:'아직 백업한 적이 없어요.'}</div><div style="height:10px"></div>`};
 function startScore(){snap();if(!S.user){S.userErr='사용자 이름을 입력해 주세요.';draw(true);return}if(!S.infoOk){S.infoErr='날짜·구장명을 입력하고 "✔ 입력" 버튼으로 확정해 주세요.';draw(true);return}Object.assign(S,Z(),{scr:'sc',mode:'score',err:'',note:'',src:'',batch:false,bk:null,vs:null});draw()}
 function scBack(){S.mode='fine';toSetup()}
 async function analyzeSC(file){const sample=window.claude?await claude.use('sample'):null;if(!sample){S.err='사진 분석은 Claude 앱에서 이 앱의 링크를 열었을 때만 쓸 수 있어요.';return draw(true)}
@@ -539,31 +1861,147 @@ async function analyzeSC(file){const sample=window.claude?await claude.use('samp
   S.note=(k>=0?'':`스코어카드에서 내 이름(${ME()})을 찾지 못했어요. 아래에서 내 기록으로 저장할 선수를 골라 주세요. `)+(miss?`읽지 못한 ${miss}칸은 파로 채웠어요. 아래에서 확인·수정하세요.`:'');
   S.err='';S.scr='resx';draw()
  }catch(e){S.scr=prev;S.err=e&&e.code==='not_granted'?'분석 권한을 허용해야 사진을 분석할 수 있어요.':'스코어카드를 읽지 못했어요. 글자가 선명하게 나오도록 다시 촬영하거나 올려 주세요.';draw()}}
+
+function tmDraft(t){return t?{op:t.op||'',g:t.g.map(x=>({names:x.names.slice(),hc:x.hc.slice()}))}:{op:S.user||'',g:Array.from({length:4},()=>({names:['','','',''],hc:[80,80,80,80]}))}}
+const tmNewId=()=>'t'+Date.now().toString(36)+Math.random().toString(36).slice(2,6);
+function tmSave(){try{if(S.tm)localStorage.setItem('gg_tm',JSON.stringify(S.tm));else localStorage.removeItem('gg_tm')}catch(e){}}
+function startTm(){snap();if(!S.infoOk){S.infoErr='날짜·구장명을 입력하고 "✔ 입력" 버튼으로 확정해 주세요.';draw(true);return}S.err='';S.tmAsk=false;S.tmMsg='';S.tmImgUrl='';if(S.tm&&S.tm.g&&S.tm.g.length){S.scr='tm_up'}else{S.tmd=tmDraft(null);S.scr='tm_set'}draw();window.scrollTo(0,0)}
+function tmSnap(){const D=S.tmd;if(!D||S.scr!=='tm_set')return;const op=$('tmop');if(op)D.op=op.value;D.g.forEach((G,g)=>G.names.forEach((_,i)=>{const n=$('tn_'+g+'_'+i),h=$('th_'+g+'_'+i);if(n)G.names[i]=n.value;if(h){const v=parseFloat(h.value);if(!isNaN(v))G.hc[i]=v}}))}
+function tmN(d){tmSnap();const D=S.tmd,n=Math.max(1,Math.min(16,D.g.length+d));while(D.g.length<n)D.g.push({names:['','','',''],hc:[80,80,80,80]});D.g.length=n;draw(true)}
+function tmM(g,d){tmSnap();const G=S.tmd.g[g],n=Math.max(1,Math.min(5,G.names.length+d));while(G.names.length<n){G.names.push('');G.hc.push(80)}G.names.length=n;G.hc.length=n;draw(true)}
+function tmHc(g,i,d){tmSnap();const G=S.tmd.g[g];G.hc[i]=Math.max(30,Math.min(150,Math.round((G.hc[i]||80)+d)));draw(true)}
+function tmOk(){tmSnap();const D=S.tmd,miss=[];if(!String(D.op||'').trim()){S.err='운영자 이름을 입력해 주세요.';return draw(true)}D.g.forEach((G,g)=>G.names.forEach((n,i)=>{if(!String(n).trim())miss.push((g+1)+'조 '+(i+1)+'번')}));
+ if(miss.length){S.err='이름이 비어 있어요: '+miss.slice(0,6).join(', ')+(miss.length>6?' 외 '+(miss.length-6)+'곳':'');return draw(true)}
+ const g2=D.g.map(G=>({names:G.names.map(x=>String(x).trim().slice(0,10)),hc:G.hc.map(v=>Math.round(v))})),old=S.tm,same=!!(old&&old.g&&old.g.length===g2.length&&old.g.every((G,g)=>G.names.length===g2[g].names.length));
+ S.tm={id:same&&old.id?old.id:tmNewId(),op:String(D.op).trim().slice(0,10),autoDone:same?!!old.autoDone:false,g:g2,cards:same?(old.cards||{}):{},ov:same?(old.ov||{}):{},sort:(old&&old.sort)||'gross',uniq:!!(old&&old.uniq),hid:same?old.hid:null,date:same?old.date:S.date,course:same?old.course:S.course,saved:same?(old.saved||{}):{}};
+ tmSave();S.err='';S.scr='tm_up';draw();window.scrollTo(0,0)}
+function tmBack(){S.scr='setup';S.err='';S.tmAsk=false;draw()}
+function tmEditRoster(){S.tmd=tmDraft(S.tm);S.err='';S.scr='tm_set';draw();window.scrollTo(0,0)}
+function tmReset2(){S.tm=null;tmSave();S.tmd=tmDraft(null);S.tmAsk=false;S.scr='tm_set';draw();window.scrollTo(0,0)}
+function tmPick(g,id){S.tmT=g;S.err='';$(id).click()}
+function tmSetH(g,i,j,v){v=Math.round(Number(v));if(!(v>0))return draw(true);const q=S.tm.cards[g].holes[i];if(j<0){if([3,4,5,6].includes(v))q.par=v}else q.s[j]=v;S.tm.hid=S.tm.hid;tmSave();draw(true)}
+const tmSet=e=>{const D=S.tmd;return `<div class="card"><h2>🏌️ 단체전 설정</h2><div class="sub">${S.date} · ${S.course}</div><div class="guide">운영자 이름을 확인하고, 조의 개수를 정한 뒤 조별로 이름과 <b>평균 핸디</b>(평소 평균 타수)를 입력하세요. 핸디는 처음에 80이고 − / + 로 조정해요.</div><label>운영자 이름</label><input id="tmop" value="${D.op||''}" placeholder="대회 운영자 이름" maxlength="10"><label>조의 개수</label><div class="row" style="align-items:center"><button class="st m" onclick="tmN(-1)">−</button><div class="sv"><b>${D.g.length}</b><small>개 조</small></div><button class="st" onclick="tmN(1)">+</button></div></div>`
+ +D.g.map((G,g)=>`<div class="card"><div class="row" style="align-items:center"><h2 style="margin:0;flex:1">${g+1}조</h2><button class="sm g" style="flex:none" onclick="tmM(${g},-1)">인원 −</button><b style="flex:none">${G.names.length}명</b><button class="sm g" style="flex:none" onclick="tmM(${g},1)">+</button></div><div class="sub" style="margin-top:6px">이름 · 평균 핸디 (− / +)</div>`+G.names.map((n,i)=>`<div class="pi">${dot(i)}<input id="tn_${g}_${i}" value="${n}" placeholder="이름" style="flex:1;min-width:0"><button class="sm" style="flex:none" onclick="tmHc(${g},${i},-1)">−</button><input id="th_${g}_${i}" type="number" inputmode="numeric" value="${G.hc[i]}" style="flex:none;width:60px;text-align:center;padding:10px 2px"><button class="sm" style="flex:none" onclick="tmHc(${g},${i},1)">+</button></div>`).join('')+`</div>`).join('')+`${e}<button onclick="tmOk()">✅ 명단 확정 → 스코어카드 올리기</button><button class="g" onclick="tmBack()">← 초기 화면으로</button>`};
+const tmEdit=g=>{const G=S.tm.g[g],c=S.tm.cards[g];return `<details style="margin-top:10px" ${S.tmOpen&&S.tmOpen[g]?'open':''} ontoggle="S.tmOpen=S.tmOpen||{};S.tmOpen[${g}]=this.open"><summary>✏️ 점수 확인·수정</summary>${c.note?`<div class="err">${c.note}</div>`:''}<table class="sc"><tr><th>홀</th><th>파</th>${G.names.map((n,i)=>`<th style="color:${COL[i]}">${n.slice(0,3)}</th>`).join('')}</tr>${c.holes.map((q,i)=>`<tr><td>${i+1}</td><td><input type="number" inputmode="numeric" value="${q.par}" onchange="tmSetH(${g},${i},-1,this.value)"></td>`+q.s.map((v,j)=>`<td><input type="number" inputmode="numeric" value="${v}" onchange="tmSetH(${g},${i},${j},this.value)"></td>`).join('')+'</tr>').join('')}</table></details>`};
+const tmUp=e=>{const T=S.tm,tot=T.g.reduce((a,G)=>a+G.names.length,0),up=Object.keys(T.cards).length;
+ return `<div class="card"><h2>🏌️ 단체전 · 스코어카드 올리기</h2><div class="sub">${T.date} · ${T.course} · 운영자 ${T.op||'-'} · ${T.g.length}개 조 · ${tot}명 · 올린 조 ${up}/${T.g.length}</div><div class="guide">경기가 끝나면 조별로 스코어카드를 <b>카메라로 촬영</b>하거나 <b>사진 파일</b>로 올려 주세요. 모든 조를 올린 뒤 <b>결산결과</b>를 누르면 순위와 시상이 나와요.</div>${e}</div>`
+ +T.g.map((G,g)=>{const c=T.cards[g];return `<div class="card"><div class="row" style="align-items:center"><h2 style="margin:0;flex:1">${g+1}조</h2><span class="chip ${c?'A':'B'}" style="margin:0;flex:none">${c?'✔ 올림 '+c.holes.length+'홀':'미업로드'}</span></div><div class="sub" style="margin:6px 0">${G.names.map((n,i)=>n+'('+G.hc[i]+')').join(' · ')}</div><div class="row"><button class="o" onclick="tmPick(${g},'fc')">📷 ${c?'다시 촬영':'카메라로 촬영'}</button><button class="g" onclick="tmPick(${g},'fg')">🖼 ${c?'다시 올리기':'파일 올리기'}</button></div>${c?tmEdit(g):''}</div>`}).join('')
+ +`<button onclick="tmRes()">📊 결산결과</button><button class="g" onclick="tmEditRoster()">✏️ 조·명단 수정</button><button class="g" onclick="tmBack()">← 초기 화면으로</button>`+(S.tmAsk?`<div class="card"><div class="msg">단체전 명단과 올린 스코어카드를 모두 지울까요?</div><div class="row"><button class="g" onclick="S.tmAsk=false;draw(true)">취소</button><button class="r" onclick="tmReset2()">삭제</button></div></div>`:`<button class="r" onclick="S.tmAsk=true;draw(true)">🗑 단체전 새로 만들기</button>`)};
+async function analyzeTG(file){const g=S.tmT,G=S.tm.g[g],sample=window.claude?await claude.use('sample'):null;
+ if(!sample){S.err='사진 분석은 Claude 앱에서 이 앱의 링크를 열었을 때만 쓸 수 있어요.';return draw(true)}
+ const prev=S.scr,K=G.names.length;S.scr='busy';draw();
+ try{const blob=await shrink(file),sj=G.names.map((_,j)=>`${j+1}번째줄타수`).join(',');
+  const d=await sample.json(`첨부한 사진은 골프 스코어카드입니다. 선수 ${K}명의 이름은 다음과 같습니다(번호 0~${K-1}): ${G.names.map((n,i)=>i+':'+n).join(', ')}. 카드에 보이는 선수 줄의 순서(위에서 아래, 또는 왼쪽에서 오른쪽)대로 players에 넣고, 각 줄이 위 이름 중 누구인지 who(0~${K-1})로 알려 주세요. 이름이 보이지 않거나 맞출 수 없으면 who는 null.\n각 홀의 파와 타수를 읽어 아래 JSON만 출력하세요(설명·코드블록 금지).\n{"players":[{"name":"카드에 적힌 이름","who":0}],"holes":[{"par":4,"scores":[${sj}]}]}\nholes는 1번 홀부터 순서대로 전부(보통 18개)입니다. scores는 players 줄 순서와 같아야 합니다. 타수가 '+1','-1' 같은 파 대비 표기이면 파를 더해 실제 타수로 환산하세요. 읽을 수 없는 칸은 null.`,{images:[blob],cache:false});
+  let who=(d.players||[]).slice(0,K).map(p=>Number.isInteger(p&&p.who)&&p.who>=0&&p.who<K?p.who:null);const okm=who.length===K&&who.every(v=>v!=null)&&new Set(who).size===K;if(!okm)who=[...Array(K).keys()];
+  let miss=0;const H=(d.holes||[]).map(h=>{const par=[3,4,5,6].includes(h.par)?h.par:4,s=Array(K).fill(par);who.forEach((w,j)=>{const v=Number(h.scores&&h.scores[j]);if(!(v>0)){miss++}else s[w]=Math.round(v)});return{par,s}});
+  if(H.length<1)throw 0;
+  S.tm.cards[g]={holes:H,note:(okm?'':'스코어카드의 이름을 명단과 맞추지 못해 입력한 순서대로 가정했어요. 아래에서 확인해 주세요. ')+(miss?`읽지 못한 ${miss}칸은 파로 채웠어요. 아래에서 확인·수정하세요.`:'')};
+  S.tm.hid=null;if(S.tm.saved)delete S.tm.saved[g];tmSave();S.err='';S.scr='tm_up';S.tmOpen=S.tmOpen||{};S.tmOpen[g]=true;draw()
+ }catch(e){S.scr=prev;S.err=e&&e.code==='not_granted'?'분석 권한을 허용해야 사진을 분석할 수 있어요.':'스코어카드를 읽지 못했어요. 글자가 선명하게 나오도록 다시 촬영하거나 올려 주세요.';draw()}}
+function tmPars(){const T=S.tm;for(const g in T.cards){const H=T.cards[g].holes;if(H.length>=18)return H.slice(0,18).map(q=>q.par)}return null}
+function tmPickHid(){const pars=tmPars();if(!pars)return null;const sh=a=>{a=a.slice();for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[a[i],a[j]]=[a[j],a[i]]}return a},half=(lo,hi)=>{const idx=[];for(let i=lo;i<hi;i++)idx.push(i);const by=p=>idx.filter(i=>pars[i]===p);let r=[...sh(by(4)).slice(0,4),...sh(by(3)).slice(0,1),...sh(by(5)).slice(0,1)];if(r.length<6)r=r.concat(sh(idx.filter(i=>!r.includes(i))).slice(0,6-r.length));return r};return half(0,9).concat(half(9,18)).sort((a,b)=>a-b)}
+function tmPlayers(){const T=S.tm,P=[];T.g.forEach((G,g)=>G.names.forEach((n,i)=>{const c=T.cards[g],p={k:g+'_'+i,g,i,name:n,hc:G.hc[i],has:!!c};
+ if(c){const H=c.holes;let gross=0,b=0,pa=0,bo=0,db=0;const sp=[];H.forEach((q,h)=>{const s=q.s[i],d=s-q.par;gross+=s;if(s===1)sp.push('홀인원('+(h+1)+'번 홀)');else if(d<=-3)sp.push('알바트로스('+(h+1)+'번 홀)');else if(d===-2)sp.push('이글('+(h+1)+'번 홀)');if(d===-1)b++;else if(d===0)pa++;else if(d===1)bo++;else if(d>=2)db++});
+  Object.assign(p,{gross,b,pa,bo,db,sp,holes:H.length,net:gross-p.hc});
+  if(T.hid&&H.length>=18){let t=0,ph=0;T.hid.forEach(h=>{t+=H[h].s[i];ph+=H[h].par});const nh=Math.round(Math.max(0,Math.min(24,(t-ph)*1.2))*10)/10;p.nph=nh;p.npn=Math.round((gross-nh)*10)/10;p.hidt=t}}
+ P.push(p)}));return P}
+function tmAwards(P){const have=P.filter(p=>p.has),res={},taken=new Set(),U=!!S.tm.uniq,pool=()=>U?have.filter(p=>!taken.has(p.k)):have,
+ give=(nm,L)=>L.forEach(p=>{(res[p.k]=res[p.k]||[]).push(nm);taken.add(p.k)}),
+ minBy=(L,f,tb)=>{if(!L.length)return[];const v=Math.min(...L.map(f));let W=L.filter(p=>Math.abs(f(p)-v)<1e-9);if(tb&&W.length>1){const t=Math.min(...W.map(tb));W=W.filter(p=>Math.abs(tb(p)-t)<1e-9)}return W},
+ maxBy=(L,f)=>{if(!L.length)return[];const v=Math.max(...L.map(f));return L.filter(p=>Math.abs(f(p)-v)<1e-9)};
+ give('참피온',minBy(pool(),p=>p.gross));
+ give('신페리오 우승',minBy(pool().filter(p=>p.npn!==undefined),p=>p.npn,p=>p.nph));
+ give('핸디우승',minBy(pool(),p=>p.net,p=>p.hc));
+ give('다 버디상',maxBy(pool().filter(p=>p.b>0),p=>p.b));
+ give('다 파상',maxBy(pool().filter(p=>p.pa>0),p=>p.pa));
+ give('다 보기상',maxBy(pool().filter(p=>p.bo>0),p=>p.bo));
+ give('다 더블상',maxBy(pool().filter(p=>p.db>0),p=>p.db));
+ give('매구상',minBy(pool(),p=>Math.abs(p.net)));
+ give('진보상',minBy(pool().filter(p=>p.net<0),p=>p.net));
+ give('격려상',maxBy(pool(),p=>p.gross));
+ return res}
+const tmKey=()=>({gross:p=>p.gross,net:p=>p.net,np:p=>p.npn===undefined?1e9:p.npn}[S.tm.sort||'gross']);
+function tmSorted(P){const f=tmKey(),L=P.slice().sort((a,b)=>f(a)-f(b)||a.gross-b.gross||a.g-b.g||a.i-b.i),rk=[];L.forEach((p,i)=>{rk[i]=(i>0&&Math.abs(f(p)-f(L[i-1]))<1e-9)?rk[i-1]:i+1});return L.map((p,i)=>Object.assign({},p,{rank:rk[i]}))}
+function tmAwText(p,aw){const o=S.tm.ov&&S.tm.ov[p.k];return o!==undefined?o:(aw[p.k]||[]).join(', ')}
+const tmSaveNote=()=>{const T=S.tm;if(!S.user)return '';const inRoster=T.g.some((G,g)=>G.names.indexOf(S.user)>=0&&T.cards[g]);if(T.op===S.user)return inRoster?'<div class="sub" style="margin-top:8px">✔ 운영자(나)의 단체전 결과가 내 이력에 자동 저장돼요.</div>':'<div class="sub" style="margin-top:8px">운영자 이름이 명단에 없어서 내 이력에는 저장하지 않았어요.</div>';return `<div class="sub" style="margin-top:8px">운영자 이름(${T.op})이 내 사용자 이름과 달라서 이력에 자동 저장하지 않아요. 참가자는 공유받은 시상결과 이미지를 시작 화면의 "단체전 시상결과 저장"으로 올리면 돼요.</div>`};
+function tmRes(){const T=S.tm;if(!Object.keys(T.cards).length){S.err='스코어카드를 한 조 이상 올려 주세요.';return draw(true)}if(!T.hid){T.hid=tmPickHid();tmSave()}tmAutoSave();S.err='';S.tmMsg='';S.tmImgUrl='';S.scr='tm_res';draw();window.scrollTo(0,0)}
+function tmSort(v){S.tm.sort=v;tmSave();tmAutoSave();draw(true)}
+function tmUniq(v){S.tm.uniq=!!v;tmSave();tmAutoSave();draw(true)}
+function tmOv(k,v){if(!S.tm.ov)S.tm.ov={};S.tm.ov[k]=v;tmSave();tmAutoSave()}
+function tmOvReset(){S.tm.ov={};tmSave();tmAutoSave();draw(true)}
+function tmHid(){S.tm.hid=tmPickHid();tmSave();tmAutoSave();draw(true)}
+const tmSpTok=sp=>sp.map(t=>{const m=String(t).match(/^(홀인원|알바트로스|이글)\((\d+)번 홀\)$/);return m?({홀인원:'H',알바트로스:'A',이글:'E'}[m[1]]+m[2]):''}).filter(Boolean).join(',');
+const tmSpTxt=t=>String(t||'').split(',').filter(Boolean).map(k=>({H:'홀인원',A:'알바트로스',E:'이글'}[k[0]]||'')+'('+k.slice(1)+'번 홀)');
+function tmParTotal(){const T=S.tm;const p=tmPars();if(p)return p.reduce((a,b)=>a+b,0);const c=Object.values(T.cards)[0];return c?c.holes.reduce((a,q)=>a+q.par,0):72}
+function tmPayload(){const T=S.tm,A=tmPlayers(),aw=tmAwards(A),L=tmSorted(A.filter(p=>p.has));return{v:1,i:T.id,d:T.date,c:T.course,o:T.op,p:tmParTotal(),h:Math.min(...L.map(p=>p.holes)),sb:T.sort||'gross',ps:L.map(p=>[p.name,p.g+1,p.hc,p.gross,p.b,p.pa,p.bo,p.db,tmSpTok(p.sp),tmAwText(p,aw),p.npn===undefined?null:p.npn,p.nph===undefined?null:p.nph,p.rank])}}
+function tmRows(t){return t.ps.map(q=>({n:q[0],g:q[1],hc:q[2],s:q[3],b:q[4],pa:q[5],bo:q[6],db:q[7],sp:tmSpTxt(q[8]),aw:q[9],np:q[10],nh:q[11],r:q[12]}))}
+function tmRecBase(t,i){const p=t.ps[i],par=t.p||72;return{owner:S.user,date:t.d,course:t.c,score:p[3],diff:p[3]-par,holes:t.h||18,full:(t.h||18)>=9,mode:'tm',tm:{id:t.i,op:t.o,sb:t.sb,me:i,ps:tmRows(t)}}}
+function tmAutoSave(){try{const T=S.tm;if(!T||!S.user||T.op!==S.user||!Object.keys(T.cards).length)return false;const A=tmPlayers(),L=tmSorted(A.filter(p=>p.has)),me=L.find(p=>p.name===S.user);if(!me)return false;
+ const t=tmPayload(),i=t.ps.findIndex(q=>q[0]===S.user&&q[1]===me.g+1);if(i<0)return false;const rec=tmRecBase(t,i),c=T.cards[me.g],G=T.g[me.g];rec.d={v:2,me:me.i,names:G.names.slice(),holes:JSON.parse(JSON.stringify(c.holes)),xr:{mode:'score'}};
+ const idx=HIST.findIndex(x=>x.owner===S.user&&x.tm&&x.tm.id===T.id);if(idx>=0){rec.locked=HIST[idx].locked;HIST[idx]=rec}else if(!T.autoDone){HIST.push(rec);T.autoDone=true}else return false;
+ localStorage.setItem('gg_hist',JSON.stringify(HIST));tmSave();return true}catch(e){return false}}
+async function tmZip(str){const u=new TextEncoder().encode(str);if(window.CompressionStream){try{const cs=new CompressionStream('deflate-raw'),w=cs.writable.getWriter();w.write(u);w.close();const z=new Uint8Array(await new Response(cs.readable).arrayBuffer());return Uint8Array.from([1,...z])}catch(e){}}return Uint8Array.from([0,...u])}
+async function tmUnzip(u8){const f=u8[0],b=u8.slice(1);if(f===0)return new TextDecoder().decode(b);const ds=new DecompressionStream('deflate-raw'),w=ds.writable.getWriter();w.write(b);w.close();return new TextDecoder().decode(await new Response(ds.readable).arrayBuffer())}
+function tmQr(bytes){let s='';for(let i=0;i<bytes.length;i++)s+=String.fromCharCode(bytes[i]);for(const lv of[3,0,1]){try{const q=new QRB.QRCode(-1,lv);q.addData(s);q.make();return q}catch(e){}}return null}
+async function tmDecodeBitmap(bmp){for(const k of[1,.75,.5,1.5,.35]){const W=Math.round(bmp.width*k),H=Math.round(bmp.height*k);if(W*H>3e7||W<50||H<50)continue;const cv=document.createElement('canvas');cv.width=W;cv.height=H;const x=cv.getContext('2d',{willReadFrequently:true});x.imageSmoothingEnabled=true;x.drawImage(bmp,0,0,W,H);const d=x.getImageData(0,0,W,H).data,g=new Uint8Array(W*H);for(let i=0,j=0;i<g.length;i++,j+=4)g[i]=(d[j]*299+d[j+1]*587+d[j+2]*114)/1000|0;const r=QRD.decode(g,W,H);if(r)return r;await new Promise(r=>setTimeout(r,0))}return null}
+function tmImpPick(){snap();if(!S.user){S.userErr='사용자 이름을 먼저 입력해 주세요.';draw(true);return}S.tmImpErr='';$('ftm').click()}
+async function tmImport(file){if(!file)return;S.tmImpErr='';S.tmDone='';S.scr='busy';draw();
+ try{const bmp=await createImageBitmap(file),u8=await tmDecodeBitmap(bmp);if(!u8)throw 1;const t=JSON.parse(await tmUnzip(u8));if(!t||t.v!==1||!Array.isArray(t.ps)||!t.ps.length)throw 2;S.tmI=t;const idx=t.ps.findIndex(p=>p[0]===S.user);S.tmSel=idx>=0?idx:-1;S.tmImpMsg='';S.scr='tm_imp';draw();window.scrollTo(0,0)}
+ catch(e){S.scr='setup';S.tmImpErr='시상결과 이미지에서 QR코드를 읽지 못했어요. 운영자가 공유한 시상결과 이미지가 맞는지 확인하고, 카카오톡에서 "원본"으로 받아 다시 올려 주세요.';draw()}}
+const tmTable=(R,me)=>`<div style="overflow-x:auto"><table class="tmt"><tr><th>순위</th><th>이름</th><th>핸디</th><th>점수</th><th>핸디감안</th><th>신페리오 네트(핸디)</th><th>버디</th><th>파</th><th>보기</th><th>더블+</th><th>특이사항</th><th>시상내용</th></tr>`+R.map((p,i)=>`<tr ${i===me?'style="background:var(--in)"':''}><td>${p.r<=3?['🥇','🥈','🥉'][p.r-1]:p.r}</td><td>${p.n} <span class="sub">${p.g}조</span>${i===me?' ⭐':''}</td><td>${p.hc}</td><td><b>${p.s}</b></td><td>${(p.s-p.hc>0?'+':'')+(p.s-p.hc)}</td><td>${p.np!=null?p.np+' ('+p.nh+')':'-'}</td><td>${p.b}</td><td>${p.pa}</td><td>${p.bo}</td><td>${p.db}</td><td>${p.sp.length?'<b style="color:var(--bad)">'+p.sp.join(', ')+'</b>':'-'}</td><td style="font-weight:400;text-align:left">${p.aw||'-'}</td></tr>`).join('')+`</table></div>`;
+const tmImpScr=()=>{const t=S.tmI,R=tmRows(t),sel=S.tmSel,sbn={gross:'타수순',net:'핸디 감안순',np:'신페리오순'}[t.sb]||'';
+ return `<div class="card"><h2>🏅 단체전 시상결과</h2><div class="sub">${t.d} · ${t.c}${t.o?' · 운영자 '+t.o:''} · ${R.length}명 · ${sbn}</div><label>나는 누구인가요?</label><select onchange="S.tmSel=Number(this.value);S.tmImpMsg='';draw(true)"><option value="-1" ${sel<0?'selected':''}>내 이름을 골라 주세요</option>${R.map((p,i)=>`<option value="${i}" ${sel===i?'selected':''}>${p.r}위 ${p.n} (${p.g}조 · ${p.s}타)</option>`).join('')}</select>${sel<0?`<div class="err">사용자 이름(${S.user})이 명단에 없어요. 내 이름을 직접 골라 주세요.</div>`:''}${S.tmImpMsg?`<div class="err">${S.tmImpMsg}</div>`:''}</div><div class="card">${tmTable(R,sel)}<div class="sub" style="margin-top:8px">← 옆으로 밀어서 모두 볼 수 있어요.</div></div><button onclick="tmImpSave()" ${sel<0?'disabled':''}>✅ 내 이력에 저장</button><button class="g" onclick="tmImpBack()">← 취소</button>`};
+function tmImpBack(){S.tmI=null;S.scr='setup';draw()}
+function tmImpSave(){const t=S.tmI,i=S.tmSel;if(!t||i<0)return;if(HIST.some(x=>x.owner===S.user&&x.tm&&x.tm.id===t.i)){S.tmImpMsg='이미 내 이력에 저장된 단체전이에요.';return draw(true)}HIST.push(tmRecBase(t,i));try{localStorage.setItem('gg_hist',JSON.stringify(HIST))}catch(e){}S.tmI=null;S.scr='setup';S.tmDone='단체전 결과를 내 이력에 저장했어요.';draw();setTimeout(()=>{S.tmDone='';if(S.scr==='setup')draw(true)},9000)}
+function tmViewCard(x){const t=x.tm;return `<div class="card"><h2>🏅 단체전 시상결과</h2><div class="sub">${x.date} · ${x.course}${t.op?' · 운영자 '+t.op:''} · ${t.ps.length}명 · 내 줄은 ⭐ 표시</div><div style="margin-top:8px">${tmTable(t.ps,t.me)}</div></div>`}
+function tmCanvas(q){const T=S.tm,A=tmPlayers(),aw=tmAwards(A),L=tmSorted(A.filter(p=>p.has)),cols=[['순위',70],['이름',230],['핸디',80],['점수',90],['핸디감안',110],['신페리오',170],['버디',70],['파',60],['보기',70],['더블+',80],['특이사항',250],['시상내용',430]],pad=20,W0=cols.reduce((a,c)=>a+c[1],0)+pad*2,rh=56,hh=150,tblH=hh+(L.length+1)*rh+50;
+ const n=q?q.getModuleCount():0,qms=q?Math.max(4,Math.min(14,Math.floor((W0-60)/(n+8)))):0,qS=q?(n+8)*qms:0,qH=q?qS+250:0,W=W0,H=tblH+qH,cv=document.createElement('canvas');cv.width=W;cv.height=H;const x=cv.getContext('2d');
+ x.fillStyle='#fff';x.fillRect(0,0,W,H);x.fillStyle='#2e7d32';x.fillRect(0,0,W,112);x.fillStyle='#fff';x.font='bold 46px sans-serif';x.fillText('BG-Betting Golf · 단체전 결과',pad,58);x.font='28px sans-serif';x.fillText(T.date+' · '+T.course+' · 운영자 '+(T.op||'-')+' · '+T.g.length+'개 조',pad,98);
+ const fit=(t,w,f)=>{let z=f;x.font=z+'px sans-serif';while(x.measureText(t).width>w-12&&z>13){z--;x.font=z+'px sans-serif'}return z};
+ let y=hh-20;x.fillStyle='#e8f5e9';x.fillRect(pad,y,W-pad*2,rh);x.fillStyle='#1d2b1f';x.font='bold 24px sans-serif';let cx=pad;cols.forEach(c=>{x.textAlign='center';x.fillText(c[0],cx+c[1]/2,y+37);cx+=c[1]});y+=rh;
+ L.forEach((p,r)=>{if(r%2)(x.fillStyle='#f6faf6',x.fillRect(pad,y,W-pad*2,rh));x.fillStyle='#1d2b1f';cx=pad;
+  const vals=[p.rank+'',p.name+' ('+(p.g+1)+'조)',p.hc+'',p.gross+'',(p.net>0?'+':'')+p.net,p.npn!==undefined?p.npn+' ('+p.nph+')':'-',p.b+'',p.pa+'',p.bo+'',p.db+'',p.sp.length?p.sp.join(', '):'-',tmAwText(p,aw)||'-'];
+  vals.forEach((t,ci)=>{const w=cols[ci][1];x.textAlign=(ci===1||ci>=10)?'left':'center';const z=fit(t,w,ci===1?26:24);x.font=(ci===1?'bold ':'')+z+'px sans-serif';x.fillStyle=ci===11?'#b71c1c':'#1d2b1f';x.fillText(t,(ci===1||ci>=10)?cx+8:cx+w/2,y+37);cx+=w});
+  x.strokeStyle='#d7e5d7';x.beginPath();x.moveTo(pad,y+rh);x.lineTo(W-pad,y+rh);x.stroke();y+=rh});
+ x.textAlign='left';x.fillStyle='#68796b';x.font='22px sans-serif';x.fillText('핸디감안 = 점수 − 핸디 · 신페리오 = 네트(핸디) · 더블+ = 더블보기 이상',pad,y+34);
+ if(q){const top=tblH+10;x.textAlign='center';x.fillStyle='#1d2b1f';x.font='bold 38px sans-serif';x.fillText('참가자 이력 저장용 QR코드',W/2,top+36);x.font='26px sans-serif';x.fillStyle='#4a5a4d';x.fillText('BG 앱 초기 화면 > 단체전 시상결과 저장 에서 이 이미지를 올리면 내 이력에 저장돼요',W/2,top+78);x.font='22px sans-serif';x.fillText('(카카오톡으로 보낼 때 \'원본\'으로 보내면 가장 잘 읽혀요)',W/2,top+110);
+  const qx=Math.round((W-qS)/2),qy=top+140;x.fillStyle='#fff';x.fillRect(qx,qy,qS,qS);x.fillStyle='#000';for(let r=0;r<n;r++)for(let c=0;c<n;c++)if(q.isDark(r,c))x.fillRect(qx+(c+4)*qms,qy+(r+4)*qms,qms,qms)}
+ return cv}
+async function tmImg(){S.tmMsg='이미지를 만드는 중이에요…';draw(true);let q=null;try{q=tmQr(await tmZip(JSON.stringify(tmPayload())))}catch(e){}tmAutoSave();const cv=tmCanvas(q);S.tmImgUrl=cv.toDataURL('image/png');S.tmMsg=q?'이미지를 복사하는 중이에요…':'참가자가 많아 QR코드를 넣지 못했어요. 이미지는 복사돼요. ';draw(true);try{const blob=await new Promise(r=>cv.toBlob(r,'image/png'));await Promise.race([navigator.clipboard.write([new ClipboardItem({'image/png':blob})]),new Promise((_,j)=>setTimeout(()=>j(new Error('timeout')),6000))]);S.tmMsg=(q?'':S.tmMsg)+'시상결과 이미지를 복사했어요! 카카오톡 대화방의 입력창을 길게 눌러 "붙여넣기" 하세요. (보낼 때 "원본"으로 보내면 참가자 앱이 가장 잘 읽어요.)'}catch(e){S.tmMsg=(q?'':S.tmMsg)+'이미지 복사가 막혀 있어요. 아래 이미지를 길게 눌러 저장하거나 복사한 뒤 카카오톡에 보내세요.'}draw(true)}
+const tmResScr=()=>{const T=S.tm,A=tmPlayers(),aw=tmAwards(A),L=tmSorted(A.filter(p=>p.has)),none=A.filter(p=>!p.has),medal=['🥇','🥈','🥉'],fmt=v=>(v>0?'+':'')+v,mine=T.g.some((G,g)=>G.names.indexOf(S.user)>=0&&T.cards[g]&&!(T.saved&&T.saved[g]));
+ return `<div class="card"><h2>📊 단체전 결산결과</h2><div class="sub">${T.date} · ${T.course} · 운영자 ${T.op||'-'} · 올린 조 ${Object.keys(T.cards).length}/${T.g.length} · ${L.length}명</div>${none.length?`<div class="err">스코어카드가 없는 선수 ${none.length}명은 제외했어요: ${none.slice(0,6).map(p=>p.name+'('+(p.g+1)+'조)').join(', ')}${none.length>6?' 외':''}</div>`:''}<label>순위 기준</label><select onchange="tmSort(this.value)"><option value="gross" ${T.sort==='gross'||!T.sort?'selected':''}>타수순 (점수가 낮은 순)</option><option value="net" ${T.sort==='net'?'selected':''}>핸디 감안순 (점수 − 핸디)</option><option value="np" ${T.sort==='np'?'selected':''}>신페리오순</option></select><label style="display:flex;align-items:center;gap:8px;margin-top:12px"><input type="checkbox" style="width:22px;height:22px;flex:none;padding:0" ${T.uniq?'checked':''} onchange="tmUniq(this.checked)"> 한 사람이 한 가지 상만 받기 (앞선 상 우선)</label></div>`
+ +`<div class="card"><div style="overflow-x:auto"><table class="tmt"><tr><th>순위</th><th>이름</th><th>핸디</th><th>점수</th><th>핸디감안</th><th>신페리오 네트(핸디)</th><th>버디</th><th>파</th><th>보기</th><th>더블+</th><th>특이사항</th><th>시상내용 (눌러서 수정)</th></tr>`
+ +L.map(p=>`<tr><td>${p.rank<=3?medal[p.rank-1]:p.rank}</td><td>${p.name} <span class="sub">${p.g+1}조</span></td><td>${p.hc}</td><td><b>${p.gross}</b></td><td>${fmt(p.net)}</td><td>${p.npn!==undefined?p.npn+' ('+p.nph+')':'-'}</td><td>${p.b}</td><td>${p.pa}</td><td>${p.bo}</td><td>${p.db}</td><td>${p.sp.length?'<b style="color:var(--bad)">'+p.sp.join(', ')+'</b>':'-'}</td><td><input value="${tmAwText(p,aw).replace(/"/g,'&quot;')}" placeholder="시상 없음" onchange="tmOv('${p.k}',this.value)"></td></tr>`).join('')
+ +`</table></div><div class="sub" style="margin-top:8px">← 옆으로 밀어서 모두 볼 수 있어요. 시상 칸을 눌러 지우거나 새 상을 직접 쓰면 돼요.</div><button class="g" onclick="tmOvReset()">↺ 시상을 자동값으로 되돌리기</button></div>`
+ +`<div class="card"><h2>🎲 신페리오 방식</h2>${T.hid?`<div class="sub">히든 12홀: <b>${T.hid.map(h=>h+1).join(', ')}번 홀</b> (파4 8개, 파3·파5 각 2개, 전·후반 균등)</div>`:'<div class="sub">18홀 스코어카드가 있어야 계산돼요.</div>'}<div class="sub" style="margin-top:6px;line-height:1.6">핸디 = (히든 12홀 합계 × 1.5 − 72) × 0.8 (히든 파 합계 48 기준), 최대 24.0 (20오버 한도) · 네트 = 총 타수 − 핸디 · 네트가 같으면 핸디가 낮은 사람이 우승해요.</div><button class="g" onclick="tmHid()">🎲 히든 홀 다시 뽑기</button></div>`
+ +`<div class="card"><h2>📤 공유·저장</h2>${S.tmMsg?`<div class="msg">${S.tmMsg}</div>`:''}<button onclick="tmImg()">🖼 시상결과출력 (이미지 복사)</button>${tmSaveNote()}${S.tmImgUrl?`<img src="${S.tmImgUrl}" style="width:100%;margin-top:10px;border-radius:8px">`:''}</div>`
+ +`<button class="g" onclick="S.scr='tm_up';draw()">← 스코어카드 올리기로</button><button class="g" onclick="tmBack()">← 초기 화면으로</button>`};
 function infoConfirm(){snap();const miss=[];if(!S.date)miss.push('날짜');if(!S.course)miss.push('구장명');if(miss.length){S.infoOk=false;S.infoErr=miss.join('·')+'을(를) 입력해 주세요.'}else{S.infoOk=true;S.infoErr='';S.err=''}draw(true)}
 function infoEdit(){snap();S.infoOk=false;S.infoErr='';draw(true)}
 const HELP=[
 ['📲 앱 열기·홈 화면에 추가',`<p>링크나 QR코드를 누르면 바로 열려요. 설치나 가입은 필요 없어요. 홈 화면에 아이콘을 만들어 두면 더 편해요.</p><p><b>안드로이드 (Chrome)</b><br>오른쪽 위 ⋮ → 홈 화면에 추가 → 추가</p><p><b>아이폰 (Safari)</b><br>공유 버튼 → 홈 화면에 추가 → 추가</p><p>카톡 안에서 열렸다면 "다른 브라우저로 열기"로 다시 여세요. 골프장은 신호가 약할 수 있으니 라운드 전에 앱을 미리 열어 두고, 라운드 중에는 앱을 끄지 마세요.</p>`],
-['👤 처음 한 번: 내 이름 입력',`<p>맨 위 "기록 관리" 카드에 내 이름을 쓰고 <b>입력</b>을 누르세요. 이 이름으로 평균 타수와 기록이 쌓여요. 이름이 없으면 게임을 시작할 수 없어요.</p><ul><li>게임할 때 참가자 이름에도 같은 이름을 쓰면 내 기록으로 저장돼요.</li><li>이름을 바꾸려면 <b>수정</b> → 새 이름 입력 → <b>기록관리 리셋</b>을 누르세요. 리셋한 때부터 새 이름으로 따로 관리하고, 이전 기록은 이전 이름 아래 그대로 남아요.</li></ul>`],
+['👤 처음 한 번: 내 이름 입력',`<p>맨 위 "기록 관리" 카드에 내 이름을 쓰고 <b>입력</b> → <b>확정</b>을 누르세요. 이름은 앱을 처음 쓸 때 <b>한 번만</b> 입력할 수 있고 나중에 바꿀 수 없어요. 평균 타수와 기록이 이 이름으로 쌓여요.</p><ul><li>게임할 때 참가자 이름에도 같은 이름을 쓰면 내 기록으로 저장돼요.</li><li>기록은 <b>삭제</b> 버튼으로 하나씩 지울 수 있어요.</li><li><b>백업 저장</b>으로 이름·이력을 파일로 보관해 두면, 앱을 새로 설치하거나 폰을 바꿔도 <b>백업 복원</b>으로 되살릴 수 있어요.</li></ul>`],
 ['📝 게임 시작 전 입력 (3단계)',`<ol><li><b>라운딩 정보</b>: 날짜와 구장 이름을 쓰고 <b>입력</b>으로 확정해요. 구장은 이름만 쓰고 오른쪽에서 CC나 GC를 고르면 돼요.</li><li><b>게임 선택</b>: 개인대항과 팀별대항에서 각각 한 가지씩 골라요. 하나만 골라도 돼요. 고르면 아래에 게임 설명이 나와요.</li><li><b>참가자 입력</b>: 참가 인원과 이름, 필요한 금액·핸디를 입력해요.</li></ol><p>마지막으로 <b>게임 시작 (홀별 입력)</b>을 누르세요. 시작이 안 되면 빨간 안내 문구를 따라 하세요.</p>`],
 ['🎮 게임 종류',`<ul><li><b>개인별순위</b>: 핸디를 뺀 총 타수로 순위를 매기고 순위별 상·벌을 정해요.</li><li><b>타당내기</b>: 1타당 금액으로 두 사람씩 타수 차이만큼 돈을 주고받아요.</li><li><b>팀로테이션 · 벌금게임</b>: 2홀씩 팀을 바꿔 겨루고 진 팀이 벌금을 내요.</li><li><b>팀로테이션 · 벌점게임</b>: 진 팀이 벌점을 받고, 벌점 순으로 정해 둔 총액을 나눠 내요.</li><li><b>팀로테이션 · 상금게임</b>: 미리 모은 상금을 홀마다 이긴 팀이 가져가요.</li><li><b>팀별내기</b>: A팀과 B팀의 합산 타수로 승부하고 상·벌을 정해요.</li></ul><p>팀 게임은 4명이 기본이고, 3명이면 가상 선수가 자동으로 들어가요.</p>`],
 ['⛳ 홀별 점수 입력, 내기 시작·종료',`<ol><li>파3~파6 중 파를 눌러요.</li><li>선수마다 − / + 로 타수를 맞춰요. 처음 값은 파예요. <b>말로 입력</b>도 돼요(인터넷 필요).</li><li><b>다음 홀로</b>를 누르면 저장되고 다음 홀로 넘어가요.</li><li>오른쪽 위 ◀ ▶ 로 지난 홀을 보고 고칠 수 있어요.</li></ol><p><b>내기 시작·종료</b>: 처음에는 점수만 기록돼요. 내기를 시작할 홀에서 <b>이 홀부터 내기 시작</b>을 누르면 그 홀부터 계산이 시작돼요. 끝낼 때는 <b>여기까지로 결과 확정 (내기 종료)</b>을 누르고 몇 번 홀까지인지 고르세요. 그 뒤 홀은 점수만 입력해요. 시작을 깜빡했다면 ◀ 로 그 홀로 돌아가 누르면 돼요.</p>`],
 ['🎲 배판과 정산 보기',`<p>내기 중인 홀마다 <b>단판 / 2배판 / 3배판 / 4배판</b>을 고를 수 있어요. 그 홀 금액에 배수가 곱해지고 다음 홀은 다시 단판이에요. (벌금·벌점 게임은 2홀 라운드 중 높은 배수로 계산해요.)</p><ul><li><b>타당내기</b>: <b>홀별 정산 보기</b>로 누가 누구에게 얼마를 줄지 이름 순서대로 볼 수 있어요. 핸디는 시작 전에 정산한 것으로 보고 빼요.</li><li><b>상금게임</b>: <b>홀당 정산 보기</b>로 이긴 팀, 인당 상금, 누적 상금, 상금 잔여액을 봐요. 팀 편성 방식(뽑기·좌타우타·전홀순위·전홀팀유지)은 홀마다 고르고, 비기면 상금이 이월돼요. 상금이 떨어지면 추가할지 물어봐요.</li></ul>`],
 ['💾 결과 저장과 공유',`<p>종료 홀까지 입력하면 결과 화면이 나와요. <b>게임 종료 · 결과 저장</b> → <b>저장·종료</b>를 누르면 내 기록에 저장돼요.</p><ol><li>시작 화면의 기록 목록에서 <b>보기</b>를 눌러요.</li><li><b>결과 이미지 복사</b>를 누르고 카톡 입력창을 길게 눌러 붙여넣기 하면 이미지로 올라가요.</li><li>점수를 고치려면 <b>결과 관리</b>, 더 이상 못 고치게 하려면 <b>결과 확정하기</b>를 눌러요.</li></ol>`],
 ['📸 나중에 일괄 입력·스코어만 관리',`<p><b>나중에 일괄 입력</b>: 게임 시작 대신 이 버튼으로 시작하면, 경기 후 스코어카드를 촬영하거나 파일로 올려 한 번에 입력해요. 읽은 점수를 확인·수정하고 <b>스코어 최종 확정</b>으로 끝내요.</p><p><b>스코어만 관리</b>: 내기 없이 평균 스코어와 기록만 남기고 싶을 때, 라운딩 정보 아래 <b>스코어만 관리</b>를 눌러 스코어카드를 올려요. 저장하면 기록 관리에 쌓여요.</p><p>사진 분석은 Claude에서 연 앱에서만 돼요. 일반 링크로 연 앱에서는 홀별 입력을 쓰세요.</p>`],
+['🏌️ 단체전',`<p><b>운영자</b>는 시작 화면의 <b>단체전</b> 버튼으로 여러 조의 스코어카드를 모아 순위와 시상을 정해요.</p><ol><li>운영자 이름, 조의 개수, 조별 이름과 평균 핸디(기본 80, − / + 로 조정)를 입력해요.</li><li>경기가 끝나면 조별로 스코어카드를 <b>카메라로 촬영</b>하거나 <b>파일로 올려요</b>.</li><li><b>결산결과</b>에서 순위, 버디·파·보기 개수, 홀인원·이글, 시상을 확인하고 시상 칸은 눌러서 고쳐요.</li><li><b>시상결과출력</b>으로 이미지를 복사해 카톡으로 공유해요. 이미지 아래 QR코드에 결과가 들어 있어요.</li></ol><p>운영자 이름이 내 사용자 이름과 같고 명단에 내가 있으면 결과가 내 이력에 자동 저장돼요.</p><p><b>참가자</b>는 시작 화면의 <b>단체전 시상결과 저장</b>에서 공유받은 이미지를 올리면 내 이력에 저장돼요. 카톡에서 이미지를 받을 때 <b>원본</b>으로 받으면 가장 잘 읽혀요.</p><p>신페리오는 몰래 정한 12개 홀 점수로 그날 핸디를 계산하는 방식이에요. 스코어카드 사진 분석은 Claude에서 연 앱에서만 돼요.</p>`],
 ['❓ 자주 묻는 질문',`<ul><li><b>점수를 잘못 넣었어요</b>: ◀ 로 그 홀로 돌아가 고쳐요. 저장 후에는 기록 보기의 결과 관리에서 고쳐요.</li><li><b>게임을 기록 없이 닫고 싶어요</b>: 화면 맨 아래 <b>중도 종료</b>를 눌러요.</li><li><b>마이크가 안 돼요</b>: 마이크 허용을 누르고 인터넷을 확인하세요. 안 되면 − / + 로 입력해요.</li><li><b>앱이 예전 화면이에요</b>: 앱을 완전히 끄고 다시 열거나 화면을 아래로 당겨 새로고침하세요.</li><li><b>기록이 사라졌어요</b>: 기록은 각자 폰에만 저장돼요. 브라우저의 사이트 데이터를 지우면 함께 지워져요.</li></ul>`]];
-function openHelp(){snap();S.help=true;draw();window.scrollTo(0,0)}
+function openHelp(){snap();tmSnap();S.help=true;draw();window.scrollTo(0,0)}
 function closeHelp(){S.help=false;draw(true)}
 const helpScreen=()=>`<div class="card"><h2>📖 사용 방법</h2><div class="sub">궁금한 항목을 눌러 펼쳐 보세요.</div></div>`+HELP.map(([t,b],i)=>`<div class="card" style="padding:0"><details ${i===0?'open':''}><summary style="padding:14px 16px;font-weight:800;font-size:16px">${t}</summary><div style="padding:0 16px 14px;line-height:1.7;font-size:15px">${b}</div></details></div>`).join('')+`<button class="g" onclick="closeHelp()">← 돌아가기</button>`;
 const infoCard=()=>{const cm=String(S.course||'').match(/^(.*?)\s*(CC|GC)$/i),base=cm?cm[1]:(S.course||''),sx=cm?cm[2].toUpperCase():(S.csx==null?'CC':S.csx),past=[...new Set(HIST.map(x=>x.course).filter(c=>c&&c!=='-'))],ok=!!S.infoOk,dis=ok?'disabled':'';
  return `<div class="card"><h2>📅 라운딩 정보${ok?' <span class="chip B" style="font-size:12px">✔ 입력 완료</span>':''}</h2><label style="margin-top:0">날짜</label><input id="dt" type="date" value="${S.date}" ${dis}><label>구장명</label><div class="row"><input id="cs" list="cslist" value="${base}" placeholder="골프장 이름 (예: 남서울)" style="flex:1;min-width:0" oninput="csPrev()" ${dis}><select id="csx" style="flex:none;width:92px" onchange="csPrev()" ${dis}>${['CC','GC',''].map(o=>`<option value="${o}" ${sx===o?'selected':''}>${o||'붙이지 않음'}</option>`).join('')}</select></div><datalist id="cslist">${past.map(c=>`<option value="${c}">`).join('')}</datalist><div class="sub" id="csp" style="margin-top:6px">저장될 구장명: ${base?base+sx:'-'}</div>${ok?'':'<div class="sub">이름만 입력하고 오른쪽에서 CC / GC를 고르세요. 이미 CC·GC를 붙여 입력해도 중복되지 않아요. 이전에 쓴 구장은 입력하면 추천돼요.</div>'}${S.infoErr?`<div class="err" style="margin-top:8px">⚠️ ${S.infoErr}</div>`:''}${ok?'<button class="g" style="margin-top:10px" onclick="infoEdit()">✏️ 수정</button>':'<button style="margin-top:10px" onclick="infoConfirm()">✔ 입력</button>'}</div>`};
-const scoreBtn=()=>`<div class="card"><button class="o" onclick="startScore()">📋 스코어만 관리</button><div class="sub" style="margin-top:6px">내기 없이 평균 스코어와 기록만 남기고 싶을 때 쓰세요. 스코어카드를 촬영하거나 파일로 올리면 돼요.</div></div>`;
+const scoreBtn=()=>`<div class="card"><div class="row"><button class="o" onclick="startScore()">📋 스코어만 관리</button><button class="o" onclick="startTm()">🏌️ 단체전</button></div><div class="sub" style="margin-top:8px"><b>스코어만 관리</b>: 내기 없이 평균 스코어와 기록만 남겨요.<br><b>단체전</b>: 여러 조의 스코어카드를 모아 순위와 시상을 정해요 (운영자용).</div><button class="g" style="margin-top:12px" onclick="tmImpPick()">🏅 단체전 시상결과 저장 (이미지 올리기)</button><div class="sub" style="margin-top:6px">운영자가 카톡으로 공유한 시상결과 이미지를 올리면 내 이력에 저장돼요.</div>${S.tmImpErr?`<div class="err">⚠️ ${S.tmImpErr}</div>`:''}${S.tmDone?`<div class="msg" style="margin-top:8px">✅ ${S.tmDone}</div>`:''}</div>`;
 function stats(){return stats0()+infoCard()+scoreBtn()}
 function stats0(){
- const L=HIST.map((x,i)=>({x,i})).filter(o=>o.x.full&&o.x.owner===S.user&&S.user),H=L.map(o=>o.x);let h=`<div class="card"><h2>📊 ${S.user?S.user+' 기록':'기록 관리'}</h2>`+userBox();
+ const L=HIST.map((x,i)=>({x,i})).filter(o=>o.x.full&&o.x.owner===S.user&&S.user),H=L.map(o=>o.x);let h=`<div class="card"><h2>📊 ${S.user?S.user+' 기록':'기록 관리'}</h2>`+userBox()+bkRow();
  if(!S.user)return h+'</div>';
  if(!H.length)return h+'<div class="sub">아직 기록이 없어요. 게임을 마치고 "게임 종료·결과 저장"을 누르면 날짜별 구장과 점수가 여기에 쌓입니다.</div></div>';
  const n=H.length,avg=H.reduce((a,x)=>a+x.score,0)/n,ad=H.reduce((a,x)=>a+x.diff,0)/n,bx=(t,v)=>`<div class="msg" style="flex:1;margin:0">${t}<br><b style="font-size:22px">${v}</b></div>`;
- h+=`<div class="row">${bx('평균 타수',avg.toFixed(1))}${bx('파 대비',sg(+ad.toFixed(1)))}${bx('게임 수',n)}</div><table style="margin-top:10px">`+L.slice().reverse().slice(0,20).map(({x,i})=>`<tr><td style="text-align:left"><b>${x.date}</b>${x.locked?' 🔒':''}<br><span class="sub">${x.course}</span></td><td style="text-align:right">${x.score}타 <span class="${x.diff>0?'lose':x.diff<0?'win':''}">(${sg(x.diff)})</span></td><td style="text-align:right;width:118px"><button class="g sm" onclick="openRec(${i})">보기</button> <button class="g sm" onclick="S.del=${i};draw(true)">삭제</button></td></tr>`+(S.del===i?`<tr><td colspan="3" style="text-align:left"><div class="msg" style="margin:0">${x.date} ${x.course} 기록만 삭제할까요?<br><span class="sub">되돌릴 수 없어요.</span></div><div class="row"><button class="g" onclick="S.del=-1;draw(true)">취소</button><button class="r" onclick="delOne(${i})">삭제</button></div></td></tr>`:'')).join('')+'</table></div>';
+ h+=`<div class="row">${bx('평균 타수',avg.toFixed(1))}${bx('파 대비',sg(+ad.toFixed(1)))}${bx('게임 수',n)}</div><table style="margin-top:10px">`+L.slice().reverse().slice(0,20).map(({x,i})=>`<tr><td style="text-align:left"><b>${x.date}</b>${x.locked?' 🔒':''}${x.mode==='tm'?' 🏅':''}<br><span class="sub">${x.course}</span></td><td style="text-align:right">${x.score}타 <span class="${x.diff>0?'lose':x.diff<0?'win':''}">(${sg(x.diff)})</span></td><td style="text-align:right;width:118px"><button class="g sm" onclick="openRec(${i})">보기</button> <button class="g sm" onclick="S.del=${i};draw(true)">삭제</button></td></tr>`+(S.del===i?`<tr><td colspan="3" style="text-align:left"><div class="msg" style="margin:0">${x.date} ${x.course} 기록만 삭제할까요?<br><span class="sub">되돌릴 수 없어요.</span></div><div class="row"><button class="g" onclick="S.del=-1;draw(true)">취소</button><button class="r" onclick="delOne(${i})">삭제</button></div></td></tr>`:'')).join('')+'</table></div>';
  return h
 }
 const hadj=(r,A)=>{const raw=A?r.ra:r.rb,h=A?r.ha:r.hb;return h?`${raw-h}타 <span class="sub">(${raw}${h>0?'−'+h:'+'+(-h)})</span>`:`${raw}타`};
@@ -585,7 +2023,7 @@ const endbtn=()=>S.ask?`<div class="card"><div class="msg">게임을 중도 종�
 function draw(keep){CTXN=(S.scr==='view'&&HIST[S.vi]&&HIST[S.vi].d&&HIST[S.vi].d.names)?HIST[S.vi].d.names.length:0;
  const e=S.err?`<div class="err">⚠️ ${S.err}</div>`:'';
  let h=`<div class="hero">${LOGO}<div><b>BG</b><small>Betting Golf · 골프 내기</small></div><button onclick="${S.help?'closeHelp()':'openHelp()'}" style="margin:0 0 0 auto;width:auto;flex:none;padding:9px 12px;font-size:13px;line-height:1.2;background:rgba(255,255,255,.22);color:#fff;border:1px solid rgba(255,255,255,.6);box-shadow:none;text-shadow:none">${S.help?'✕ 닫기':'📖 사용 방법'}</button></div>`;
- if(S.help){h+=helpScreen()}else if(S.scr==='setup'&&!(S.sel&&(S.sel.ind||S.sel.team))){h+=setupNone(e)}else if(S.scr==='setup'&&S.sel.ind&&S.sel.team){h+=setupBoth(e)}else if(S.scr==='setup'&&S.mode==='prize'){h+=setupPrize(e)}else if(S.scr==='setup'&&(S.mode==='rank'||S.mode==='team'||S.mode==='tap')){h+=setupX(e)}else if(S.scr==='setup'){
+ if(S.help){h+=helpScreen()}else if(S.scr==='tm_set'){h+=tmSet(e)}else if(S.scr==='tm_up'){h+=tmUp(e)}else if(S.scr==='tm_res'){h+=tmResScr()}else if(S.scr==='tm_imp'){h+=tmImpScr()}else if(S.scr==='setup'&&!(S.sel&&(S.sel.ind||S.sel.team))){h+=setupNone(e)}else if(S.scr==='setup'&&S.sel.ind&&S.sel.team){h+=setupBoth(e)}else if(S.scr==='setup'&&S.mode==='prize'){h+=setupPrize(e)}else if(S.scr==='setup'&&(S.mode==='rank'||S.mode==='team'||S.mode==='tap')){h+=setupX(e)}else if(S.scr==='setup'){
   h+=stats()+`<div class="card"><h2>🎮 게임 선택</h2>${modeBtns()}
   ${nSel()}${nameScanBox()}<h2 style="margin-top:18px">👥 참가자</h2>`+PI().map(i=>`<div class="pi">${dot(i)}<input id="n${i}" value="${S.names[i]}" placeholder="선수${i+1}" oninput="hlx()" ${S.v3&&i===3?'readonly':''}></div>`).join('')+
   `${vcBox()}<label>🙋 나는 몇 번 선수?</label><select id="me">${PI().map(i=>`<option value="${i}" ${S.me===i?'selected':''}>선수 ${i+1}</option>`).join('')}</select>${S.mode==='fine'?`<label>💵 진 팀 벌금 (진 팀 인당, 원)</label><input id="fine" type="number" inputmode="numeric" value="${S.fine}"><label>🤝 비겼을 때 벌금 (네 명 각자, 원)</label><input id="tie" type="number" inputmode="numeric" value="${S.tie}">`:`<label>💰 벌금 총액 (원)</label><div id="totwrap">${totSel()}</div><label>↔ 벌금 최대폭 (1위와 4위 벌금 차이, 원)</label><input id="spr" type="number" inputmode="numeric" value="${S.spread}"><div class="sub" style="margin-top:6px">벌금은 1,000원 단위로 계산해요.</div>`}
@@ -614,7 +2052,8 @@ function draw(keep){CTXN=(S.scr==='view'&&HIST[S.vi]&&HIST[S.vi].d&&HIST[S.vi].d
   h+=`<div class="card"><h2>⚙️ 진행 중 설정 변경</h2><div class="sub">지금까지 입력한 점수는 그대로 두고, 바꾼 설정으로 벌금·벌점을 처음부터 다시 계산해요.</div><h2 style="margin-top:14px">🎮 게임 방식</h2><div class="row"><button class="par ${S.mode==='fine'?'on':''}" style="font-size:15px" onclick="setMode('fine')">💰 벌금게임</button><button class="par ${S.mode==='pt'?'on':''}" style="font-size:15px" onclick="setMode('pt')">🎯 벌점게임</button></div>${cfgFine()}<h2 style="margin-top:18px">🎯 팀 핸디</h2><div class="sub">그 두 명이 한 팀일 때 합산 타수에서 핸디만큼 빼고 비교해요. 기본값은 0이에요.</div>${hcpRows()}${e}<button onclick="cfgDone()">✅ 적용하고 돌아가기</button><button class="g" onclick="cfgCancel()">취소</button></div>`;
  }else if(S.scr==='view'){
   const x=HIST[S.vi];if(!x){S.scr='setup';return draw()}
-  h+=`<div class="card"><h2>📋 ${x.date} · ${x.course}</h2><div class="sub">${x.holes}홀${x.d&&x.d.xr?(x.d.xr.mode==='rank'?' · 개인별순위':x.d.xr.mode==='tap'?' · 타당내기':x.d.xr.mode==='prize'?' · 상금게임':x.d.xr.mode==='score'?' · 스코어만 관리':' · 팀별내기'):''} · ${x.owner||ME()} ${x.score}타 (${sg(x.diff)})</div><div class="sub" style="margin-top:6px">${x.locked?'🔒 확정됨 (수정 불가)':'🔓 미확정 · 수정 가능'}</div></div>`;
+  h+=`<div class="card"><h2>📋 ${x.date} · ${x.course}</h2><div class="sub">${x.holes}홀${x.tm?' · 🏅 단체전 '+((x.tm.ps[x.tm.me]||{}).r||'')+'위':x.d&&x.d.xr?(x.d.xr.mode==='rank'?' · 개인별순위':x.d.xr.mode==='tap'?' · 타당내기':x.d.xr.mode==='prize'?' · 상금게임':x.d.xr.mode==='score'?' · 스코어만 관리':' · 팀별내기'):''} · ${x.owner||ME()} ${x.score}타 (${sg(x.diff)})</div><div class="sub" style="margin-top:6px">${x.tm&&!x.d?'🏅 단체전 결과 (읽기 전용)':x.locked?'🔒 확정됨 (수정 불가)':'🔓 미확정 · 수정 가능'}</div></div>`;
+  if(x.tm)h+=tmViewCard(x);
   if(x.d){const H=x.d.holes,tot=PI().map(i=>H.reduce((a,q)=>a+q.s[i],0)),pt=H.reduce((a,q)=>a+q.par,0);
    h+=manageCard(x)+scorecard({tot,pt},{holes:H,names:dispNames(x.d)})+payCard(x)+`<div class="card"><h2>📤 동반자에게 공유 (카카오톡 붙여넣기)</h2><div class="sub">모든 동반자에게 같은 내용을 공유해요. 이미지에는 ${x.d.xr&&x.d.xr.mode==='score'?'스코어카드':'스코어카드와 정산 결과'}가 들어가고, 이름은 모두 전체 이름으로 나와요. (이 화면에서는 ${x.owner||ME()} 외 동반자 이름이 가려져 보여요.) 🖼 이미지 복사를 누르면 결과가 그림 파일로 복사돼요. 카카오톡 대화방의 입력창을 길게 눌러 붙여넣기 하면 사진처럼 올라가요.</div>${x.d.v===2?'':'<div class="sub" style="color:var(--bad)">이전 방식으로 저장된 기록이라 복사해도 이름이 가려진 채로 나와요.</div>'}<button class="o" onclick="copyImg(${S.vi})">🖼 결과 이미지 복사 (스코어카드·벌금·라운드)</button>${S.msg2?`<div class="sub" style="margin-top:8px;color:var(--gd);font-weight:600">${S.msg2}</div>`:''}${S.img?`<img src="${S.img}" alt="스코어카드" style="width:100%;border-radius:12px;margin-top:10px;border:1px solid var(--bd)">`:''}</div>`}
   else h+='<div class="card"><div class="sub">상세 기록이 저장되기 전의 게임이라 스코어카드를 볼 수 없어요.</div></div>';
@@ -643,9 +2082,12 @@ function draw(keep){CTXN=(S.scr==='view'&&HIST[S.vi]&&HIST[S.vi].d&&HIST[S.vi].d
 }
 ['fnc','fng'].forEach(id=>$(id).addEventListener('change',ev=>{const f=ev.target.files[0];ev.target.value='';readNames(f)}));
 ['fc','fg'].forEach(id=>$(id).addEventListener('change',ev=>{const f=ev.target.files[0];ev.target.value='';analyze(f)}));
+$('ftm').addEventListener('change',ev=>{const f=ev.target.files[0];ev.target.value='';tmImport(f)});
+$('fbk').addEventListener('change',ev=>{const f=ev.target.files[0];ev.target.value='';bkRestore(f)});
+try{navigator.storage&&navigator.storage.persist&&navigator.storage.persist()}catch(e){}
 const D=JSON.parse(JSON.stringify(S));
 try{const g=JSON.parse(localStorage.getItem('gg_game')||'null');if(g&&g.ver===2&&['play','round','res','cfg','resx','xwait','batch','tapres'].includes(g.scr)){S={...S,...g,ask:false,help:false};if(!g.sel)S.sel=selFromMode(S.mode);if(S.scr==='cfg')S.scr=S.back||'play';if(!S.hcp||typeof S.hcp!=='object')S.hcp={};calc(S.holes)}}catch(e){try{localStorage.removeItem('gg_game')}catch(_){}S=JSON.parse(JSON.stringify(D))}
-const chk=()=>{if(S.scr!=='setup'&&S.scr!=='busy'&&S.start!==today()){finish(true);return true}};
+const chk=()=>{if(!['setup','busy','sc','tm_set','tm_up','tm_res','tm_imp'].includes(S.scr)&&S.start!==today()){finish(true);return true}};
 chk();
 document.addEventListener('visibilitychange',()=>{if(!document.hidden&&chk())draw()});
 try{draw()}catch(e){try{localStorage.removeItem('gg_game')}catch(_){}S=JSON.parse(JSON.stringify(D));try{draw()}catch(e2){$('app').innerHTML='<div class="card"><h2>화면을 불러오지 못했어요</h2><button onclick="try{localStorage.removeItem(\'gg_game\');localStorage.removeItem(\'gg_pref\')}catch(e){};location.reload()">저장 데이터 초기화 후 다시 열기</button></div>'}}
